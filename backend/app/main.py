@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, Query, Path, Body, Request, UploadFile, File, Form
+from fastapi import FastAPI, Depends, HTTPException, Query, Path, Body, Request, UploadFile, File, Form, Header
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -9,7 +9,7 @@ import string
 import pyotp
 import json
 import os
-from passlib.context import CryptContext
+import bcrypt
 from jose import jwt
 
 from . import models
@@ -23,6 +23,7 @@ app = FastAPI(title="B2B2C Marketplace API", description="API for the B2B2C Mark
 JWT_SECRET_KEY = "crp-super-secret-key-change-in-production"
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = 60 * 24
+PRE_AUTH_EXPIRE_MINUTES = 5
 
 # Configure CORS - MUST be the first middleware
 app.add_middleware(
@@ -52,8 +53,7 @@ async def global_exception_handler(request: Request, exc: Exception):
         },
     )
 
-# Password hashing via passlib CryptContext for stable bcrypt compatibility
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Password hashing via direct bcrypt (Python 3.13 safe)
 
 # Dependency to get the database session
 def get_db():
@@ -107,7 +107,8 @@ class LoginRequest(BaseModel):
     password: str
 
 class LoginResponse(BaseModel):
-    access_token: str
+    access_token: Optional[str] = None
+    pre_auth_token: Optional[str] = None
     token_type: str = "bearer"
     user_id: int
     role: str
@@ -136,6 +137,9 @@ class TwoFactorSetupResponse(BaseModel):
     backup_codes: List[str]
 
 class TwoFactorVerifyRequest(BaseModel):
+    code: str
+
+class BackupCodeVerifyRequest(BaseModel):
     code: str
 
 # Item models
@@ -244,15 +248,42 @@ def generate_backup_codes(count=5, length=10):
     return [''.join(random.choices(string.ascii_uppercase + string.digits, k=length)) for _ in range(count)]
 
 def verify_password(plain_password, hashed_password):
-    """Verify a password against a hash"""
+    """Verify a password against a hash using direct bcrypt."""
     try:
-        return pwd_context.verify(plain_password, hashed_password)
+        return bcrypt.checkpw(
+            str(plain_password).encode("utf-8"),
+            str(hashed_password).encode("utf-8")
+        )
     except Exception:
         return False
 
 def get_password_hash(password):
-    """Hash a password"""
-    return pwd_context.hash(password)
+    """Hash a password using direct bcrypt."""
+    return bcrypt.hashpw(
+        str(password).encode("utf-8"),
+        bcrypt.gensalt()
+    ).decode("utf-8")
+
+def create_jwt_token(user_id: int, role_name: str, token_use: str, expires_minutes: int):
+    expire = datetime.utcnow() + timedelta(minutes=expires_minutes)
+    payload = {
+        "user_id": user_id,
+        "role": role_name,
+        "token_use": token_use,
+        "exp": expire,
+    }
+    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+def decode_bearer_token(authorization: Optional[str]) -> Dict[str, Any]:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+    token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token")
+    try:
+        return jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 def user_to_response(user):
     """Convert a user model to a response model"""
@@ -286,37 +317,52 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         (models.User.username.ilike(identifier_lower)) | (models.User.email.ilike(identifier_lower))
     ).first()
 
+    user_found = db_user is not None
+    password_match = verify_password(payload.password, db_user.password_hash) if db_user else False
+    print(f"[LOGIN_DEBUG] user_found={user_found}, password_match={password_match}, identifier={identifier_lower}")
+
     if not db_user:
         raise HTTPException(status_code=401, detail="Ungültiger Benutzername oder Passwort")
 
-    if not verify_password(payload.password, db_user.password_hash):
-        import bcrypt
-        try:
-            if not bcrypt.checkpw(payload.password.encode("utf-8"), db_user.password_hash.encode("utf-8")):
-                raise HTTPException(status_code=401, detail="Ungültiger Benutzername oder Passwort")
-        except Exception:
-            raise HTTPException(status_code=401, detail="Ungültiger Benutzername oder Passwort")
+    if not password_match:
+        raise HTTPException(status_code=401, detail="Ungültiger Benutzername oder Passwort")
 
     if db_user.role is None:
         raise HTTPException(status_code=500, detail="Benutzerrolle fehlt in der Datenbank")
 
     role_name = db_user.role.name.upper()
 
-    expire = datetime.utcnow() + timedelta(minutes=JWT_EXPIRE_MINUTES)
-    token_payload = {
-        "user_id": db_user.id,
-        "role": role_name,
-        "exp": expire,
-    }
-    token = jwt.encode(token_payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
-
     has_2fa = bool(getattr(db_user, "two_factor_secret", None))
+
+    if has_2fa:
+        pre_auth_token = create_jwt_token(
+            user_id=db_user.id,
+            role_name=role_name,
+            token_use="pre_auth",
+            expires_minutes=PRE_AUTH_EXPIRE_MINUTES,
+        )
+        return {
+            "access_token": None,
+            "pre_auth_token": pre_auth_token,
+            "token_type": "bearer",
+            "user_id": db_user.id,
+            "role": role_name,
+            "has2FA": True,
+        }
+
+    access_token = create_jwt_token(
+        user_id=db_user.id,
+        role_name=role_name,
+        token_use="access",
+        expires_minutes=JWT_EXPIRE_MINUTES,
+    )
     return {
-        "access_token": token,
+        "access_token": access_token,
+        "pre_auth_token": None,
         "token_type": "bearer",
         "user_id": db_user.id,
         "role": role_name,
-        "has2FA": has_2fa,
+        "has2FA": False,
     }
 
 @app.get("/welcome")
@@ -507,11 +553,20 @@ def setup_2fa(user_id: int = Path(...), db: Session = Depends(get_db)):
 def verify_2fa_setup(
     user_id: int = Path(...),
     payload: TwoFactorVerifyRequest = Body(...),
+    authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db)
 ):
     """
     Verify and finalize 2FA setup for a user.
     """
+    token_payload = decode_bearer_token(authorization)
+    if token_payload.get("token_use") not in ["pre_auth", "access"]:
+        raise HTTPException(status_code=403, detail="Token is not allowed for 2FA verification")
+
+    token_user_id = token_payload.get("user_id")
+    if token_user_id != user_id:
+        raise HTTPException(status_code=403, detail="Token user mismatch")
+
     db_user = db.query(models.User).filter(models.User.id == user_id).first()
     if not db_user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -524,14 +579,74 @@ def verify_2fa_setup(
         raise HTTPException(status_code=400, detail="Invalid verification code format")
 
     totp = pyotp.TOTP(db_user.two_factor_secret)
-    if not totp.verify(code):
+    if not totp.verify(code, valid_window=1):
         raise HTTPException(status_code=400, detail="Invalid verification code")
 
     db.commit()
     db.refresh(db_user)
+
+    role_name = db_user.role.name.upper() if db_user.role else "CUSTOMER"
+    access_token = create_jwt_token(
+        user_id=db_user.id,
+        role_name=role_name,
+        token_use="access",
+        expires_minutes=JWT_EXPIRE_MINUTES,
+    )
+
     return {
-        "message": "2FA erfolgreich aktiviert",
-        "backup_codes": db_user.backup_codes or []
+        "message": "2FA erfolgreich verifiziert",
+        "access_token": access_token,
+        "token_type": "bearer"
+    }
+
+@app.post("/users/{user_id}/2fa/backup-verify")
+def verify_backup_code(
+    user_id: int = Path(...),
+    payload: BackupCodeVerifyRequest = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db)
+):
+    token_payload = decode_bearer_token(authorization)
+    if token_payload.get("token_use") != "pre_auth":
+        raise HTTPException(status_code=403, detail="Token is not allowed for backup verification")
+
+    token_user_id = token_payload.get("user_id")
+    if token_user_id != user_id:
+        raise HTTPException(status_code=403, detail="Token user mismatch")
+
+    db_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not db_user.two_factor_secret:
+        raise HTTPException(status_code=400, detail="2FA is not enabled for this user")
+
+    submitted_code = (payload.code or "").strip().upper()
+    current_codes = list(db_user.backup_codes or [])
+    normalized_codes = [str(code).strip().upper() for code in current_codes]
+
+    if submitted_code not in normalized_codes:
+        raise HTTPException(status_code=400, detail="Invalid backup code")
+
+    remove_index = normalized_codes.index(submitted_code)
+    current_codes.pop(remove_index)
+    db_user.backup_codes = current_codes
+
+    db.commit()
+    db.refresh(db_user)
+
+    role_name = db_user.role.name.upper() if db_user.role else "CUSTOMER"
+    access_token = create_jwt_token(
+        user_id=db_user.id,
+        role_name=role_name,
+        token_use="access",
+        expires_minutes=JWT_EXPIRE_MINUTES,
+    )
+
+    return {
+        "message": "Backup-Code erfolgreich verifiziert",
+        "access_token": access_token,
+        "token_type": "bearer"
     }
 
 @app.get("/users/{user_id}/2fa/backup-codes")

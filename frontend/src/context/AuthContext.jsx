@@ -33,6 +33,7 @@ export const AuthProvider = ({ children }) => {
   const [authMode, setAuthMode] = useState('login'); // 'login' or 'register'
   const [loginStep, setLoginStep] = useState(1); // 1: username/password, 2: 2FA
   const [tempUser, setTempUser] = useState(null); // Temporarily store user during login process
+  const [tempToken, setTempToken] = useState(null); // Pre-auth token for 2FA verification only
   
   // Error state
   const [error, setError] = useState('');
@@ -113,18 +114,24 @@ export const AuthProvider = ({ children }) => {
         })
       });
 
+      const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        setError('Ungültiger Benutzername oder Passwort');
+        setError(data?.detail || 'Ungültiger Benutzername oder Passwort');
+        return false;
+      }
+      localStorage.setItem('user_id', String(data.user_id));
+
+      const has2FA = Boolean(data.has2FA);
+      const authHeaderToken = has2FA ? data.pre_auth_token : data.access_token;
+
+      if (!authHeaderToken) {
+        setError('Token-Antwort vom Server ist unvollständig');
         return false;
       }
 
-      const data = await response.json();
-      setToken(data.access_token);
-      localStorage.setItem('user_id', String(data.user_id));
-
       const usersResponse = await fetch(`${API_URL}/users`, {
         headers: {
-          Authorization: `Bearer ${data.access_token}`
+          Authorization: `Bearer ${authHeaderToken}`
         }
       });
 
@@ -156,13 +163,16 @@ export const AuthProvider = ({ children }) => {
             profileImage: null
           };
 
-      if (Boolean(data.has2FA)) {
+      if (has2FA) {
         setTempUser(userData);
+        setTempToken(data.pre_auth_token || null);
+        setToken(null);
+        setUser(null);
         setLoginStep(2);
         return true;
       }
 
-      completeLogin(userData);
+      completeLogin(userData, data.access_token);
       return true;
     } catch {
       setError('Login fehlgeschlagen');
@@ -180,8 +190,14 @@ export const AuthProvider = ({ children }) => {
       return false;
     }
 
-    if (!token) {
-      setError('Token fehlt. Bitte erneut anmelden.');
+    if (!tempUser?.id) {
+      setError('Ungültige Benutzer-ID. Bitte erneut anmelden.');
+      setLoginStep(1);
+      return false;
+    }
+
+    if (!tempToken) {
+      setError('Pre-Auth-Token fehlt. Bitte erneut anmelden.');
       setLoginStep(1);
       return false;
     }
@@ -191,7 +207,7 @@ export const AuthProvider = ({ children }) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          Authorization: `Bearer ${tempToken}`
         },
         body: JSON.stringify({ code })
       });
@@ -202,7 +218,12 @@ export const AuthProvider = ({ children }) => {
         return false;
       }
 
-      completeLogin(tempUser);
+      if (!data?.access_token) {
+        setError('Kein finaler Access-Token vom Server erhalten.');
+        return false;
+      }
+
+      completeLogin(tempUser, data.access_token);
       return true;
     } catch {
       setError('2FA-Verifizierung fehlgeschlagen');
@@ -210,14 +231,64 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Backup code local bypass removed for security reasons
-  const useBackupCode = () => {
-    setError('Backup-Code-Verifizierung ist nur über das Backend erlaubt.');
-    return false;
+  // Login step 2 alternative: Verify backup code via backend
+  const useBackupCode = async (code) => {
+    setError('');
+
+    if (!tempUser) {
+      setError('Sitzung abgelaufen. Bitte erneut anmelden.');
+      setLoginStep(1);
+      return false;
+    }
+
+    if (!tempUser?.id) {
+      setError('Ungültige Benutzer-ID. Bitte erneut anmelden.');
+      setLoginStep(1);
+      return false;
+    }
+
+    if (!tempToken) {
+      setError('Pre-Auth-Token fehlt. Bitte erneut anmelden.');
+      setLoginStep(1);
+      return false;
+    }
+
+    if (!code || !code.trim()) {
+      setError('Backup-Code ist erforderlich.');
+      return false;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/users/${tempUser.id}/2fa/backup-verify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tempToken}`
+        },
+        body: JSON.stringify({ code: code.trim() })
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(data?.detail || 'Ungültiger Backup-Code');
+        return false;
+      }
+
+      if (!data?.access_token) {
+        setError('Kein finaler Access-Token vom Server erhalten.');
+        return false;
+      }
+
+      completeLogin(tempUser, data.access_token);
+      return true;
+    } catch {
+      setError('Backup-Code-Verifizierung fehlgeschlagen');
+      return false;
+    }
   };
 
   // Complete the login process
-  const completeLogin = (userData) => {
+  const completeLogin = (userData, finalToken) => {
     // Create a sanitized user object (without password and secrets)
     const sanitizedUser = {
       id: userData.id,
@@ -228,7 +299,9 @@ export const AuthProvider = ({ children }) => {
     };
     
     setUser(sanitizedUser);
+    setToken(finalToken || null);
     setTempUser(null);
+    setTempToken(null);
     setLoginStep(1);
     setIsAuthModalOpen(false);
   };
@@ -268,6 +341,7 @@ export const AuthProvider = ({ children }) => {
     setToken(null);
     setUsers([]);
     setTempUser(null);
+    setTempToken(null);
     setLoginStep(1);
     setError('');
     setIsAuthModalOpen(false);
@@ -286,7 +360,7 @@ export const AuthProvider = ({ children }) => {
 
   // Check if user is authenticated
   const isAuthenticated = () => {
-    return !!user;
+    return !!user && !!token;
   };
 
   // Check if user has a specific role
@@ -299,6 +373,7 @@ export const AuthProvider = ({ children }) => {
     setAuthMode('login');
     setLoginStep(1);
     setTempUser(null);
+    setTempToken(null);
     setError('');
     setIsAuthModalOpen(true);
   };
@@ -308,15 +383,22 @@ export const AuthProvider = ({ children }) => {
     setAuthMode('register');
     setLoginStep(1);
     setTempUser(null);
+    setTempToken(null);
     setError('');
     setIsAuthModalOpen(true);
   };
 
   // Close auth modal
   const closeAuthModal = () => {
+    if (loginStep === 2) {
+      logout();
+      return;
+    }
+
     setIsAuthModalOpen(false);
     setLoginStep(1);
     setTempUser(null);
+    setTempToken(null);
     setError('');
   };
 
@@ -325,6 +407,7 @@ export const AuthProvider = ({ children }) => {
     setAuthMode(prevMode => prevMode === 'login' ? 'register' : 'login');
     setLoginStep(1);
     setTempUser(null);
+    setTempToken(null);
     setError('');
   };
 

@@ -14,13 +14,13 @@ import Navbar from './components/Navbar';
 import './App.css';
 
 function ProtectedRoute({ children, requiredRole }) {
-  const { user, isAuthenticated, authLoading } = useAuth();
+  const { user, token, isAuthenticated, authLoading } = useAuth();
 
   if (authLoading) {
     return null;
   }
 
-  if (!isAuthenticated()) {
+  if (!isAuthenticated() || !token) {
     return <Navigate to="/login" replace />;
   }
 
