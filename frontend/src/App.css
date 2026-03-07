@@ -1,0 +1,60 @@
+/* Custom scrollbar for the app */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #18181b; /* zinc-900 */
+}
+
+::-webkit-scrollbar-thumb {
+  background: #27272a; /* zinc-800 */
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46; /* zinc-700 */
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+/* Neon glow effect */
+.neon-glow {
+  box-shadow: 0 0 15px rgba(255, 255, 255, 0.7);
+}
+
+/* Transitions */
+.transition-all {
+  transition-property: all;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+
+/* Hover effect for cards */
+.hover-card {
+  transition: all 0.2s ease-in-out;
+}
+
+.hover-card:hover {
+  box-shadow: 0 0 15px rgba(255, 255, 255, 0.7);
+  transform: translateY(-2px);
+}
+
+/* Active effect for buttons */
+.active-scale {
+  transition: all 0.2s ease-in-out;
+}
+
+.active-scale:active {
+  transform: scale(0.95);
+  box-shadow: none;
+}
