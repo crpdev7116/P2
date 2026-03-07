@@ -16,83 +16,11 @@ export const useAuth = () => {
 // API URL
 const API_URL = 'http://127.0.0.1:8000';
 
-// For development, we'll still use mock data but simulate API calls
-const mockUsers = [
-  {
-    id: 1,
-    username: 'admin',
-    password: '1234', // In a real app, this would be hashed
-    role: 'admin',
-    has2FA: true,
-    twoFactorSecret: 'JBSWY3DPEHPK3PXP', // Example secret
-    backupCodes: ['123456', '234567', '345678', '456789', '567890'],
-    profileImage: null,
-    email: 'admin@example.com',
-    status: 'active',
-    allowed_payment_methods: ["CASH", "PAYPAL", "INVOICE"],
-    createdAt: new Date('2023-01-01').toISOString()
-  },
-  {
-    id: 2,
-    username: 'amanikiosk',
-    password: '1234',
-    role: 'merchant',
-    has2FA: true,
-    twoFactorSecret: 'JBSWY3DPEHPK3PXQ',
-    backupCodes: ['123457', '234568', '345679', '456780', '567891'],
-    profileImage: null,
-    email: 'amani@kiosk.com',
-    status: 'active',
-    allowed_payment_methods: ["CASH", "PAYPAL", "INVOICE"],
-    shopId: 'amanikiosk',
-    shopName: 'Amani Kiosk',
-    createdAt: new Date('2023-01-15').toISOString(),
-    subAccounts: [
-      {
-        id: 101,
-        username: 'amani-staff1',
-        password: '1234',
-        email: 'staff1@amanikiosk.com',
-        permissions: {
-          editItems: true,
-          viewOrders: true,
-          changeSettings: false
-        },
-        createdAt: new Date('2023-02-01').toISOString()
-      }
-    ]
-  },
-  {
-    id: 3,
-    username: 'testuser',
-    password: '1234',
-    role: 'customer',
-    has2FA: false,
-    twoFactorSecret: null,
-    backupCodes: [],
-    profileImage: null,
-    email: 'test@example.com',
-    status: 'active',
-    allowed_payment_methods: ["CASH", "PAYPAL"],
-    createdAt: new Date('2023-01-20').toISOString()
-  }
-];
-
-// Helper function to simulate API calls
-const simulateApiCall = (endpoint, method = 'GET', data = null) => {
-  console.log(`API Call: ${method} ${endpoint}`, data);
-  return new Promise((resolve) => {
-    // Simulate network delay
-    setTimeout(() => {
-      resolve({ success: true, data });
-    }, 500);
-  });
-};
 
 // Auth provider component
 export const AuthProvider = ({ children }) => {
   // Auth state
-  const [users, setUsers] = useState(mockUsers);
+  const [users, setUsers] = useState([]);
   const [user, setUser] = useState(() => {
     const savedUser = localStorage.getItem('user');
     return savedUser ? JSON.parse(savedUser) : null;
@@ -196,9 +124,15 @@ export const AuthProvider = ({ children }) => {
             id: data.user_id,
             username,
             role: String(data.role || '').toLowerCase(),
-            has2FA: false,
+            has2FA: Boolean(data.has2FA),
             profileImage: null
           };
+
+      if (Boolean(data.has2FA)) {
+        setTempUser(userData);
+        setLoginStep(2);
+        return true;
+      }
 
       completeLogin(userData);
       return true;
@@ -208,64 +142,49 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Login step 2: Verify 2FA code
-  const loginStep2 = (code) => {
+  // Login step 2: Verify 2FA code via backend
+  const loginStep2 = async (code) => {
     setError('');
-    
+
     if (!tempUser) {
       setError('Sitzung abgelaufen. Bitte erneut anmelden.');
       setLoginStep(1);
       return false;
     }
-    
-    // In a real app, this would validate the TOTP code
-    // For this demo, we'll accept any 6-digit code
-    if (code.length === 6 && /^\d+$/.test(code)) {
+
+    if (!token) {
+      setError('Token fehlt. Bitte erneut anmelden.');
+      setLoginStep(1);
+      return false;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/users/${tempUser.id}/2fa/verify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ code })
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(data?.detail || 'Ungültiger Code');
+        return false;
+      }
+
       completeLogin(tempUser);
       return true;
-    }
-    
-    setError('Ungültiger Code');
-    return false;
-  };
-
-  // Use backup code to bypass 2FA
-  const useBackupCode = (code) => {
-    setError('');
-    
-    if (!tempUser) {
-      setError('Sitzung abgelaufen. Bitte erneut anmelden.');
-      setLoginStep(1);
+    } catch {
+      setError('2FA-Verifizierung fehlgeschlagen');
       return false;
     }
-    
-    // Check if code matches any backup code
-    if (tempUser.backupCodes.includes(code)) {
-      // Remove the used backup code
-      const updatedUsers = users.map(u => {
-        if (u.id === tempUser.id) {
-          return {
-            ...u,
-            backupCodes: u.backupCodes.filter(c => c !== code),
-            has2FA: false // Disable 2FA after using backup code
-          };
-        }
-        return u;
-      });
-      
-      setUsers(updatedUsers);
-      
-      // Complete login with updated user (2FA disabled)
-      const updatedUser = {
-        ...tempUser,
-        has2FA: false
-      };
-      
-      completeLogin(updatedUser);
-      return true;
-    }
-    
-    setError('Ungültiger Backup-Code');
+  };
+
+  // Backup code local bypass removed for security reasons
+  const useBackupCode = () => {
+    setError('Backup-Code-Verifizierung ist nur über das Backend erlaubt.');
     return false;
   };
 
@@ -321,98 +240,8 @@ export const AuthProvider = ({ children }) => {
     setToken(null);
   };
 
-  // Setup 2FA for a user
-  const setup2FA = (verificationCode) => {
-    setError('');
-    
-    if (!user) {
-      setError('Nicht angemeldet');
-      return false;
-    }
-    
-    // In a real app, this would validate the TOTP code
-    // For this demo, we'll accept any 6-digit code
-    if (verificationCode.length === 6 && /^\d+$/.test(verificationCode)) {
-      // Generate backup codes
-      const backupCodes = Array(5).fill(0).map(() => 
-        Math.floor(100000 + Math.random() * 900000).toString()
-      );
-      
-      // Update user
-      const updatedUsers = users.map(u => {
-        if (u.id === user.id) {
-          return {
-            ...u,
-            has2FA: true,
-            twoFactorSecret: 'JBSWY3DPEHPK3PXR', // Example secret
-            backupCodes
-          };
-        }
-        return u;
-      });
-      
-      setUsers(updatedUsers);
-      
-      // Update current user
-      setUser({
-        ...user,
-        has2FA: true
-      });
-      
-      return {
-        success: true,
-        backupCodes
-      };
-    }
-    
-    setError('Ungültiger Code');
-    return {
-      success: false
-    };
-  };
-
-  // Disable 2FA for a user
-  const disable2FA = (password) => {
-    setError('');
-    
-    if (!user) {
-      setError('Nicht angemeldet');
-      return false;
-    }
-    
-    // Verify password
-    const foundUser = users.find(u => 
-      u.id === user.id && 
-      u.password === password
-    );
-    
-    if (!foundUser) {
-      setError('Ungültiges Passwort');
-      return false;
-    }
-    
-    // Update user
-    const updatedUsers = users.map(u => {
-      if (u.id === user.id) {
-        return {
-          ...u,
-          has2FA: false,
-          twoFactorSecret: null,
-          backupCodes: []
-        };
-      }
-      return u;
-    });
-    
-    setUsers(updatedUsers);
-    
-    // Update current user
-    setUser({
-      ...user,
-      has2FA: false
-    });
-    
-    return true;
+  const updateUser2FAState = (enabled) => {
+    setUser((prev) => (prev ? { ...prev, has2FA: Boolean(enabled) } : prev));
   };
 
   // Check if user is authenticated
@@ -472,8 +301,7 @@ export const AuthProvider = ({ children }) => {
     useBackupCode,
     register,
     logout,
-    setup2FA,
-    disable2FA,
+    updateUser2FAState,
     isAuthenticated,
     hasRole,
     openLoginModal,

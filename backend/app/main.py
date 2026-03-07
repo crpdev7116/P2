@@ -110,6 +110,7 @@ class LoginResponse(BaseModel):
     token_type: str = "bearer"
     user_id: int
     role: str
+    has2FA: bool
 
 class UserUpdate(BaseModel):
     username: Optional[str] = None
@@ -132,6 +133,9 @@ class TwoFactorSetupResponse(BaseModel):
     secret: str
     otpauth_url: str
     backup_codes: List[str]
+
+class TwoFactorVerifyRequest(BaseModel):
+    code: str
 
 # Item models
 class ItemBase(BaseModel):
@@ -302,11 +306,13 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     }
     token = jwt.encode(token_payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
+    has_2fa = bool(getattr(db_user, "two_factor_secret", None))
     return {
         "access_token": token,
         "token_type": "bearer",
         "user_id": db_user.id,
         "role": role_name,
+        "has2FA": has_2fa,
     }
 
 @app.get("/welcome")
@@ -478,6 +484,72 @@ def setup_2fa(user_id: int = Path(...), db: Session = Depends(get_db)):
         print(f"CRITICAL 2FA ERROR: {str(e)}")
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/users/{user_id}/2fa/verify")
+def verify_2fa_setup(
+    user_id: int = Path(...),
+    payload: TwoFactorVerifyRequest = Body(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Verify and finalize 2FA setup for a user.
+    """
+    db_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not db_user.two_factor_secret:
+        raise HTTPException(status_code=400, detail="2FA is not initialized for this user")
+
+    code = (payload.code or "").strip()
+    if not (len(code) == 6 and code.isdigit()):
+        raise HTTPException(status_code=400, detail="Invalid verification code format")
+
+    totp = pyotp.TOTP(db_user.two_factor_secret)
+    if not totp.verify(code):
+        raise HTTPException(status_code=400, detail="Invalid verification code")
+
+    db.commit()
+    db.refresh(db_user)
+    return {
+        "message": "2FA erfolgreich aktiviert",
+        "backup_codes": db_user.backup_codes or []
+    }
+
+@app.get("/users/{user_id}/2fa/backup-codes")
+def get_backup_codes(user_id: int = Path(...), db: Session = Depends(get_db)):
+    db_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not db_user.two_factor_secret:
+        raise HTTPException(status_code=400, detail="2FA is not enabled for this user")
+    return {"backup_codes": db_user.backup_codes or []}
+
+@app.post("/users/{user_id}/2fa/backup-codes/regenerate")
+def regenerate_backup_codes(user_id: int = Path(...), db: Session = Depends(get_db)):
+    db_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not db_user.two_factor_secret:
+        raise HTTPException(status_code=400, detail="2FA is not enabled for this user")
+
+    backup_codes = generate_backup_codes(count=5, length=10)
+    db_user.backup_codes = backup_codes
+    db.commit()
+    db.refresh(db_user)
+    return {"message": "Backup-Codes neu generiert", "backup_codes": db_user.backup_codes or []}
+
+@app.post("/users/{user_id}/2fa/disable")
+def disable_2fa(user_id: int = Path(...), db: Session = Depends(get_db)):
+    db_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    db_user.two_factor_secret = None
+    db_user.backup_codes = []
+    db.commit()
+    db.refresh(db_user)
+    return {"message": "2FA deaktiviert", "has2FA": False}
 
 @app.post("/users/{user_id}/profile-picture")
 async def update_profile_picture(

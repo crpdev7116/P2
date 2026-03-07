@@ -2,8 +2,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-# SQLite database URL
-SQLALCHEMY_DATABASE_URL = "sqlite:///./marketplace.db"
+import os
+
+# SQLite database URL (absolute path to backend/marketplace.db to avoid cwd mismatch)
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DB_PATH = os.path.join(_BASE_DIR, "marketplace.db")
+SQLALCHEMY_DATABASE_URL = f"sqlite:///{_DB_PATH}"
 
 # Create SQLAlchemy engine
 engine = create_engine(
