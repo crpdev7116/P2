@@ -99,7 +99,8 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str
-    role: UserRoleEnum = UserRoleEnum.CUSTOMER
+    role: Optional[UserRoleEnum] = UserRoleEnum.CUSTOMER
+    role_id: Optional[int] = None
 
 class LoginRequest(BaseModel):
     identifier: str
@@ -276,11 +277,11 @@ def read_root():
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
     """
     Login with username or email + password.
-    Returns JWT containing user_id and role.
+    Returns JWT containing user_id and role from DB source of truth.
     """
     identifier = payload.identifier.strip()
-
     identifier_lower = identifier.lower()
+
     db_user = db.query(models.User).filter(
         (models.User.username.ilike(identifier_lower)) | (models.User.email.ilike(identifier_lower))
     ).first()
@@ -289,7 +290,6 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Ungültiger Benutzername oder Passwort")
 
     if not verify_password(payload.password, db_user.password_hash):
-        # fallback for environments where passlib<->bcrypt backend mismatch occurs
         import bcrypt
         try:
             if not bcrypt.checkpw(payload.password.encode("utf-8"), db_user.password_hash.encode("utf-8")):
@@ -297,7 +297,11 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         except Exception:
             raise HTTPException(status_code=401, detail="Ungültiger Benutzername oder Passwort")
 
-    role_name = db_user.role.name if hasattr(db_user.role, "name") else str(db_user.role).upper()
+    if db_user.role is None:
+        raise HTTPException(status_code=500, detail="Benutzerrolle fehlt in der Datenbank")
+
+    role_name = db_user.role.name.upper()
+
     expire = datetime.utcnow() + timedelta(minutes=JWT_EXPIRE_MINUTES)
     token_payload = {
         "user_id": db_user.id,
@@ -356,33 +360,47 @@ def get_user(user_id: int = Path(...), db: Session = Depends(get_db)):
 @app.post("/users", response_model=UserResponse)
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
     """
-    Create a new user
+    Create a new user with role persisted from explicit role/role_id selection.
     """
-    # Check if username or email already exists
     existing_user = db.query(models.User).filter(
         (models.User.username == user.username) | (models.User.email == user.email)
     ).first()
-    
+
     if existing_user:
         if existing_user.username == user.username:
             raise HTTPException(status_code=400, detail="Username already registered")
         else:
             raise HTTPException(status_code=400, detail="Email already registered")
-    
-    # Create new user
+
+    role_mapping = {
+        1: models.UserRole.ADMIN,
+        2: models.UserRole.MODERATOR,
+        3: models.UserRole.MERCHANT,
+        4: models.UserRole.CUSTOMER,
+    }
+
+    resolved_role = None
+    if user.role_id is not None:
+        resolved_role = role_mapping.get(user.role_id)
+        if resolved_role is None:
+            raise HTTPException(status_code=400, detail=f"Ungültige role_id: {user.role_id}")
+    elif user.role is not None:
+        resolved_role = models.UserRole[user.role.name]
+    else:
+        resolved_role = models.UserRole.CUSTOMER
+
     hashed_password = get_password_hash(user.password)
-    role_str = user.role.value.upper() if hasattr(user.role, 'value') else str(user.role).upper()
     db_user = models.User(
         username=user.username,
         email=user.email,
         password_hash=hashed_password,
-        role=role_str,
+        role=resolved_role,
         allowed_payment_methods=["CASH", "PAYPAL", "INVOICE"]
     )
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
-    
+
     return user_to_response(db_user)
 
 @app.put("/users/{user_id}", response_model=UserResponse)

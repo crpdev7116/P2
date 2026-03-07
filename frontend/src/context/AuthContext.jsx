@@ -26,6 +26,7 @@ export const AuthProvider = ({ children }) => {
     return savedUser ? JSON.parse(savedUser) : null;
   });
   const [token, setToken] = useState(() => localStorage.getItem('token'));
+  const [authLoading, setAuthLoading] = useState(true);
   
   // Auth modal state
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -51,29 +52,49 @@ export const AuthProvider = ({ children }) => {
     }
   }, [user, token]);
 
-  // Restore session from token on reload
+  // Restore session from token on reload (NO hardcoded user id)
   useEffect(() => {
-    if (!token || user) return;
-
-    fetch(`${API_URL}/users`, {
-      headers: {
-        Authorization: `Bearer ${token}`
+    const restoreSession = async () => {
+      if (!token || user) {
+        setAuthLoading(false);
+        return;
       }
-    })
-      .then((res) => res.ok ? res.json() : [])
-      .then((list) => {
-        const current = Array.isArray(list) ? list.find((u) => u.id === 1) : null;
-        if (current) {
-          setUser({
-            id: current.id,
-            username: current.username,
-            role: current.role,
-            has2FA: current.has_2fa,
-            profileImage: current.profile_picture_url
-          });
+
+      const storedUserId = localStorage.getItem('user_id');
+      if (!storedUserId) {
+        setAuthLoading(false);
+        return;
+      }
+
+      try {
+        const res = await fetch(`${API_URL}/users/${storedUserId}`, {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+
+        if (!res.ok) {
+          logout();
+          setAuthLoading(false);
+          return;
         }
-      })
-      .catch(() => {});
+
+        const current = await res.json();
+        setUser({
+          id: current.id,
+          username: current.username,
+          role: String(current.role || '').toUpperCase(),
+          has2FA: current.has_2fa,
+          profileImage: current.profile_picture_url
+        });
+      } catch {
+        logout();
+      } finally {
+        setAuthLoading(false);
+      }
+    };
+
+    restoreSession();
   }, [token, user]);
 
   // Login step 1: Verify username and password
@@ -99,6 +120,7 @@ export const AuthProvider = ({ children }) => {
 
       const data = await response.json();
       setToken(data.access_token);
+      localStorage.setItem('user_id', String(data.user_id));
 
       const usersResponse = await fetch(`${API_URL}/users`, {
         headers: {
@@ -112,18 +134,24 @@ export const AuthProvider = ({ children }) => {
         backendUser = Array.isArray(list) ? list.find((u) => u.id === data.user_id) : null;
       }
 
+      const apiRole = String(data.role || '').trim().toUpperCase();
+      if (!apiRole) {
+        setError('Ungültige Rollen-Antwort vom Server');
+        return false;
+      }
+
       const userData = backendUser
         ? {
             id: backendUser.id,
             username: backendUser.username,
-            role: backendUser.role,
+            role: apiRole,
             has2FA: backendUser.has_2fa,
             profileImage: backendUser.profile_picture_url
           }
         : {
             id: data.user_id,
             username,
-            role: String(data.role || '').toLowerCase(),
+            role: apiRole,
             has2FA: Boolean(data.has2FA),
             profileImage: null
           };
@@ -238,6 +266,18 @@ export const AuthProvider = ({ children }) => {
   const logout = () => {
     setUser(null);
     setToken(null);
+    setUsers([]);
+    setTempUser(null);
+    setLoginStep(1);
+    setError('');
+    setIsAuthModalOpen(false);
+    setAuthMode('login');
+
+    localStorage.removeItem('user');
+    localStorage.removeItem('token');
+    localStorage.removeItem('role');
+    localStorage.removeItem('user_id');
+    localStorage.clear();
   };
 
   const updateUser2FAState = (enabled) => {
@@ -251,7 +291,7 @@ export const AuthProvider = ({ children }) => {
 
   // Check if user has a specific role
   const hasRole = (role) => {
-    return user?.role === role;
+    return String(user?.role || '').toUpperCase() === String(role || '').toUpperCase();
   };
 
   // Open auth modal in login mode
@@ -309,7 +349,8 @@ export const AuthProvider = ({ children }) => {
     closeAuthModal,
     toggleAuthMode,
     setError,
-    token
+    token,
+    authLoading
   };
 
   return (

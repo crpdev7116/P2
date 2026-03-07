@@ -1,7 +1,7 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { CartProvider } from './context/CartContext';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import MarketplaceHome from './pages/MarketplaceHome';
 import ShopView from './pages/ShopView';
 import AccountSettings from './pages/AccountSettings';
@@ -13,33 +13,70 @@ import Auth from './components/Auth';
 import Navbar from './components/Navbar';
 import './App.css';
 
+function ProtectedRoute({ children, requiredRole }) {
+  const { user, isAuthenticated, authLoading } = useAuth();
+
+  if (authLoading) {
+    return null;
+  }
+
+  if (!isAuthenticated()) {
+    return <Navigate to="/login" replace />;
+  }
+
+  const userRole = String(user?.role || '').toUpperCase();
+  const required = String(requiredRole || '').toUpperCase();
+
+  if (required && userRole !== required) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return children;
+}
+
+function AppRoutes() {
+  return (
+    <>
+      <Navbar />
+      <Cart />
+      <Auth />
+
+      <Routes>
+        <Route path="/" element={<MarketplaceHome />} />
+        <Route path="/dashboard" element={<MarketplaceHome />} />
+        <Route path="/login" element={<MarketplaceHome />} />
+        <Route path="/account" element={<AccountSettings />} />
+        <Route path="/my-orders" element={<MyOrders />} />
+
+        <Route
+          path="/admin/users"
+          element={
+            <ProtectedRoute requiredRole="ADMIN">
+              <UserManagement />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/settings"
+          element={
+            <ProtectedRoute requiredRole="ADMIN">
+              <AdminSettings />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route path="/:shopId" element={<ShopView />} />
+      </Routes>
+    </>
+  );
+}
+
 function App() {
   return (
     <AuthProvider>
       <CartProvider>
         <BrowserRouter>
-          {/* Global components */}
-          <Navbar />
-          <Cart />
-          <Auth />
-          
-          <Routes>
-            {/* Home route - shows all merchants */}
-            <Route path="/" element={<MarketplaceHome />} />
-            
-            {/* Account settings */}
-            <Route path="/account" element={<AccountSettings />} />
-            
-            {/* Customer routes */}
-            <Route path="/my-orders" element={<MyOrders />} />
-            
-            {/* Admin routes */}
-            <Route path="/admin/users" element={<UserManagement />} />
-            <Route path="/admin/settings" element={<AdminSettings />} />
-            
-            {/* Dynamic shop route - shows individual shop based on shopId */}
-            <Route path="/:shopId" element={<ShopView />} />
-          </Routes>
+          <AppRoutes />
         </BrowserRouter>
       </CartProvider>
     </AuthProvider>
