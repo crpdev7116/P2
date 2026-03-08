@@ -1,6 +1,5 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
 
 // Star rating component
 const StarRating = ({ rating }) => {
@@ -43,45 +42,73 @@ const StarRating = ({ rating }) => {
   );
 };
 
+const API_URL = 'http://127.0.0.1:8000';
+
 const MarketplaceHome = () => {
-  const { openLoginModal } = useAuth();
-  
-  // Dummy merchants data with ratings and recommendation flags
-  const merchants = [
-    {
-      id: 'amanikiosk',
-      name: 'Amani Kiosk',
-      description: 'Getränke, Snacks und mehr für den täglichen Bedarf',
-      image: '🏪',
-      profileImage: 'https://placehold.co/500x500/111/fff?text=AK',
-      productCount: 6,
-      rating: 4.7,
-      reviewCount: 128,
-      is_recommended: true
-    },
-    {
-      id: 'testshop',
-      name: 'Test Shop',
-      description: 'Ein Testshop mit verschiedenen Produkten',
-      image: '🛒',
-      profileImage: 'https://placehold.co/500x500/111/fff?text=TS',
-      productCount: 12,
-      rating: 3.5,
-      reviewCount: 42,
-      is_recommended: false
-    },
-    {
-      id: 'techstore',
-      name: 'Tech Store',
-      description: 'Elektronik und Zubehör',
-      image: '💻',
-      profileImage: 'https://placehold.co/500x500/111/fff?text=TS',
-      productCount: 87,
-      rating: 4.2,
-      reviewCount: 215,
-      is_recommended: true
-    }
-  ];
+  const [items, setItems] = useState([]);
+  const [merchants, setMerchants] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const [itemsRes, merchantsRes] = await Promise.all([
+          fetch(`${API_URL}/items`),
+          fetch(`${API_URL}/users?role=merchant`)
+        ]);
+
+        const itemsData = await itemsRes.json().catch(() => []);
+        const merchantsData = await merchantsRes.json().catch(() => []);
+
+        if (!itemsRes.ok) {
+          throw new Error(itemsData?.detail || 'Artikel konnten nicht geladen werden');
+        }
+        if (!merchantsRes.ok) {
+          throw new Error(merchantsData?.detail || 'Händler konnten nicht geladen werden');
+        }
+
+        setItems(Array.isArray(itemsData) ? itemsData : []);
+        setMerchants(Array.isArray(merchantsData) ? merchantsData : []);
+      } catch (e) {
+        setError(e.message || 'Fehler beim Laden der Startseitendaten');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    load();
+  }, []);
+
+  const merchantCards = useMemo(() => {
+    const countByMerchant = {};
+    (items || []).forEach((it) => {
+      const mid = Number(it?.merchant_id);
+      if (Number.isFinite(mid)) countByMerchant[mid] = (countByMerchant[mid] || 0) + 1;
+    });
+
+    return (merchants || []).map((m) => {
+      const merchantId = Number(m?.id);
+      const productCount = countByMerchant[merchantId] || 0;
+      const label = String(m?.username || m?.email || `Merchant ${merchantId}`);
+      const slug = String(m?.username || merchantId).toLowerCase().replace(/[^a-z0-9-]+/g, '-');
+
+      return {
+        id: merchantId,
+        slug,
+        name: label,
+        description: productCount > 0 ? `${productCount} verfügbare Produkte` : 'Noch keine Produkte eingestellt',
+        image: productCount > 0 ? '🛍️' : '🏪',
+        profileImage: `https://placehold.co/500x500/111/fff?text=${encodeURIComponent((label || 'M').charAt(0))}`,
+        productCount,
+        rating: 4.0,
+        reviewCount: 0,
+        is_recommended: productCount > 0
+      };
+    });
+  }, [items, merchants]);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
@@ -94,9 +121,16 @@ const MarketplaceHome = () => {
 
       <main className="container mx-auto px-4 py-8">
         <h2 className="text-xl font-semibold mb-6">Verfügbare Händler</h2>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {merchants.map(merchant => (
+
+        {loading && <div className="text-zinc-400">Lade Daten...</div>}
+        {error && <div className="text-red-400">{error}</div>}
+        {!loading && !error && merchantCards.length === 0 && (
+          <div className="text-zinc-500">Noch keine Händler verfügbar.</div>
+        )}
+
+        {!loading && !error && merchantCards.length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {merchantCards.map(merchant => (
             <Link 
               key={merchant.id} 
               to={`/${merchant.id}`}
@@ -153,7 +187,8 @@ const MarketplaceHome = () => {
               </div>
             </Link>
           ))}
-        </div>
+          </div>
+        )}
       </main>
       
       <footer className="border-t border-zinc-800 bg-zinc-900 py-6 mt-12">

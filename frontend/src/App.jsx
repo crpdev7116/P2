@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { CartProvider } from './context/CartContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import MarketplaceHome from './pages/MarketplaceHome';
@@ -8,12 +8,20 @@ import AccountSettings from './pages/AccountSettings';
 import UserManagement from './pages/UserManagement';
 import AdminSettings from './pages/AdminSettings';
 import MyOrders from './pages/MyOrders';
+import Tickets from './pages/Tickets';
+import NewTicket from './pages/tickets/NewTicket';
+import TicketDetail from './pages/tickets/TicketDetail';
+import ManageProducts from './pages/seller/ManageProducts';
+import Sales from './pages/seller/Sales';
+import Analytics from './pages/seller/Analytics';
+import ManageCustomers from './pages/seller/ManageCustomers';
+import ShopProfile from './pages/seller/ShopProfile';
 import Cart from './components/CartOptimized';
 import Auth from './components/Auth';
 import Navbar from './components/Navbar';
 import './App.css';
 
-function ProtectedRoute({ children, requiredRole }) {
+function ProtectedRoute({ children, requiredRole, allowAdminOverride = false }) {
   const { user, token, isAuthenticated, authLoading } = useAuth();
 
   if (authLoading) {
@@ -27,19 +35,50 @@ function ProtectedRoute({ children, requiredRole }) {
   const userRole = String(user?.role || '').toUpperCase();
   const required = String(requiredRole || '').toUpperCase();
 
-  if (required && userRole !== required) {
-    return <Navigate to="/dashboard" replace />;
+  if (required) {
+    const allowed = userRole === required || (allowAdminOverride && userRole === 'ADMIN');
+    if (!allowed) {
+      return <Navigate to="/dashboard" replace />;
+    }
   }
 
   return children;
 }
 
+function RestrictedStateGuard() {
+  const { user, token, isAuthenticated, authLoading } = useAuth();
+  const location = useLocation();
+
+  if (authLoading || !isAuthenticated() || !token || !user || user.is_active !== false) {
+    return null;
+  }
+
+  const allowed = (
+    location.pathname === '/tickets' ||
+    location.pathname === '/tickets/new' ||
+    location.pathname.startsWith('/tickets/')
+  );
+
+  if (allowed) {
+    return null;
+  }
+
+  return <Navigate to="/tickets" replace />;
+}
+
 function AppRoutes() {
+  const { user } = useAuth();
+  const isRestricted = !!user && user.is_active === false;
+
   return (
     <>
+      {isRestricted && (
+        <div className="bg-red-600 text-white text-center p-3 font-bold z-50">⚠️ Dein Account ist aktuell eingeschränkt. Du kannst keine Käufe oder Verkäufe tätigen. Bitte eröffne ein Support-Ticket zur Klärung.</div>
+      )}
       <Navbar />
       <Cart />
       <Auth />
+      <RestrictedStateGuard />
 
       <Routes>
         <Route path="/" element={<MarketplaceHome />} />
@@ -47,6 +86,9 @@ function AppRoutes() {
         <Route path="/login" element={<MarketplaceHome />} />
         <Route path="/account" element={<AccountSettings />} />
         <Route path="/my-orders" element={<MyOrders />} />
+        <Route path="/tickets" element={<Tickets />} />
+        <Route path="/tickets/:id" element={<TicketDetail />} />
+        <Route path="/tickets/new" element={<NewTicket />} />
 
         <Route
           path="/admin/users"
@@ -61,6 +103,47 @@ function AppRoutes() {
           element={
             <ProtectedRoute requiredRole="ADMIN">
               <AdminSettings />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/seller/shop-profile"
+          element={
+            <ProtectedRoute requiredRole="MERCHANT" allowAdminOverride={true}>
+              <ShopProfile />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/seller/products"
+          element={
+            <ProtectedRoute requiredRole="MERCHANT" allowAdminOverride={true}>
+              <ManageProducts />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/seller/sales"
+          element={
+            <ProtectedRoute requiredRole="MERCHANT" allowAdminOverride={true}>
+              <Sales />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/seller/analytics"
+          element={
+            <ProtectedRoute requiredRole="MERCHANT" allowAdminOverride={true}>
+              <Analytics />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/seller/customers"
+          element={
+            <ProtectedRoute requiredRole="MERCHANT" allowAdminOverride={true}>
+              <ManageCustomers />
             </ProtectedRoute>
           }
         />

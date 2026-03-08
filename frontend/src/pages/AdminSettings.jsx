@@ -1,60 +1,105 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import Button from '../components/Button';
 
+const API_URL = 'http://127.0.0.1:8000';
+
 const AdminSettings = () => {
-  const { hasRole } = useAuth();
-  
-  // Settings state
+  const { hasRole, withAuthHeaders, maintenanceBypassKey, setMaintenanceBypassKey } = useAuth();
+
   const [settings, setSettings] = useState({
-    maintenanceMode: false,
-    allowRegistration: true,
-    showRecommendations: true,
-    requireEmailVerification: true,
-    allowGuestCheckout: false,
-    enableAgeVerification: true,
-    enableLoyaltyProgram: true,
-    enableCreditSystem: true,
-    maxItemsPerPage: 24,
-    defaultCurrency: 'EUR',
-    taxRate: 19,
-    platformFee: 5,
-    cashPaymentFee: 0,
-    cardPaymentFee: 2.5,
-    invoicePaymentFee: 1.5
+    is_maintenance_mode: false,
+    merchant_fee_percentage: 5,
+    min_payout_amount: 50,
+    maintenance_bypass_key: 'test1234*'
   });
 
-  // Handle toggle change
-  const handleToggleChange = (key) => {
-    setSettings({
-      ...settings,
-      [key]: !settings[key]
-    });
+  const [showBypassKey, setShowBypassKey] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [feedback, setFeedback] = useState('');
+
+  useEffect(() => {
+    const loadSettings = async () => {
+      if (!hasRole('admin')) return;
+      setLoading(true);
+      setFeedback('');
+      try {
+        const res = await fetch(`${API_URL}/platform/settings`, {
+          headers: withAuthHeaders()
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setFeedback(data?.detail || 'Einstellungen konnten nicht geladen werden.');
+          return;
+        }
+
+        setSettings({
+          is_maintenance_mode: Boolean(data.is_maintenance_mode),
+          merchant_fee_percentage: Number(data.merchant_fee_percentage ?? 5),
+          min_payout_amount: Number(data.min_payout_amount ?? 50),
+          maintenance_bypass_key: data.maintenance_bypass_key || 'test1234*'
+        });
+
+        if (!maintenanceBypassKey && data.maintenance_bypass_key) {
+          setMaintenanceBypassKey(data.maintenance_bypass_key);
+        }
+      } catch {
+        setFeedback('Netzwerkfehler beim Laden der Einstellungen.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadSettings();
+  }, [hasRole, withAuthHeaders, maintenanceBypassKey, setMaintenanceBypassKey]);
+
+  const handleSave = async () => {
+    setLoading(true);
+    setFeedback('');
+    try {
+      const payload = {
+        is_maintenance_mode: settings.is_maintenance_mode,
+        merchant_fee_percentage: Number(settings.merchant_fee_percentage),
+        min_payout_amount: Number(settings.min_payout_amount),
+        maintenance_bypass_key: settings.maintenance_bypass_key
+      };
+
+      const res = await fetch(`${API_URL}/platform/settings`, {
+        method: 'PUT',
+        headers: withAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setFeedback(data?.detail || 'Speichern fehlgeschlagen.');
+        return;
+      }
+
+      setSettings({
+        is_maintenance_mode: Boolean(data.is_maintenance_mode),
+        merchant_fee_percentage: Number(data.merchant_fee_percentage ?? 5),
+        min_payout_amount: Number(data.min_payout_amount ?? 50),
+        maintenance_bypass_key: data.maintenance_bypass_key || settings.maintenance_bypass_key
+      });
+
+      setMaintenanceBypassKey(data.maintenance_bypass_key || settings.maintenance_bypass_key);
+      setFeedback('Einstellungen gespeichert.');
+    } catch {
+      setFeedback('Netzwerkfehler beim Speichern.');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  // Handle input change
-  const handleInputChange = (key, value) => {
-    setSettings({
-      ...settings,
-      [key]: value
-    });
-  };
-
-  // Save settings
-  const handleSave = () => {
-    // In a real app, this would save to a backend
-    alert('Einstellungen gespeichert!');
-  };
-
-  // Redirect if not admin
   if (!hasRole('admin')) {
     return (
       <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center">
         <div className="text-center">
           <h2 className="text-xl font-semibold mb-4">Zugriff verweigert</h2>
           <p className="text-zinc-400 mb-4">Du hast keine Berechtigung, diese Seite zu sehen.</p>
-          <Link 
+          <Link
             to="/"
             className="inline-block bg-black text-white border border-zinc-800 px-4 py-2 hover:shadow-[4px_4px_0px_0px_rgba(255,255,255,1)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all duration-200"
           >
@@ -74,283 +119,84 @@ const AdminSettings = () => {
           </Link>
           <h1 className="text-2xl font-bold mt-2">Plattform-Einstellungen</h1>
         </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          {/* General Settings */}
-          <div className="bg-zinc-900 border border-zinc-800 p-6">
-            <h2 className="text-xl font-semibold mb-6 border-b border-zinc-800 pb-2">
-              Allgemeine Einstellungen
-            </h2>
-            
-            <div className="space-y-4">
-              {/* Maintenance Mode */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-medium">Wartungsmodus</h3>
-                  <p className="text-sm text-zinc-400">Schaltet die Plattform in den Wartungsmodus</p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    className="sr-only peer"
-                    checked={settings.maintenanceMode}
-                    onChange={() => handleToggleChange('maintenanceMode')}
-                  />
-                  <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-white/50 rounded-none border border-zinc-600 peer-checked:bg-zinc-900 peer-checked:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:border-zinc-600 after:rounded-none after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
-                </label>
-              </div>
-              
-              {/* Allow Registration */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-medium">Registrierung erlauben</h3>
-                  <p className="text-sm text-zinc-400">Ermöglicht neuen Benutzern, sich zu registrieren</p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    className="sr-only peer"
-                    checked={settings.allowRegistration}
-                    onChange={() => handleToggleChange('allowRegistration')}
-                  />
-                  <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-white/50 rounded-none border border-zinc-600 peer-checked:bg-zinc-900 peer-checked:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:border-zinc-600 after:rounded-none after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
-                </label>
-              </div>
-              
-              {/* Show Recommendations */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-medium">Empfehlungs-Banner anzeigen</h3>
-                  <p className="text-sm text-zinc-400">Zeigt "Von uns empfohlen" Banner auf ausgewählten Shops</p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    className="sr-only peer"
-                    checked={settings.showRecommendations}
-                    onChange={() => handleToggleChange('showRecommendations')}
-                  />
-                  <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-white/50 rounded-none border border-zinc-600 peer-checked:bg-zinc-900 peer-checked:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:border-zinc-600 after:rounded-none after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
-                </label>
-              </div>
-              
-              {/* Require Email Verification */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-medium">E-Mail-Verifizierung erforderlich</h3>
-                  <p className="text-sm text-zinc-400">Benutzer müssen ihre E-Mail-Adresse bestätigen</p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    className="sr-only peer"
-                    checked={settings.requireEmailVerification}
-                    onChange={() => handleToggleChange('requireEmailVerification')}
-                  />
-                  <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-white/50 rounded-none border border-zinc-600 peer-checked:bg-zinc-900 peer-checked:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:border-zinc-600 after:rounded-none after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
-                </label>
-              </div>
-              
-              {/* Allow Guest Checkout */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-medium">Gast-Checkout erlauben</h3>
-                  <p className="text-sm text-zinc-400">Ermöglicht Bestellungen ohne Registrierung</p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    className="sr-only peer"
-                    checked={settings.allowGuestCheckout}
-                    onChange={() => handleToggleChange('allowGuestCheckout')}
-                  />
-                  <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-white/50 rounded-none border border-zinc-600 peer-checked:bg-zinc-900 peer-checked:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:border-zinc-600 after:rounded-none after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
-                </label>
-              </div>
-            </div>
-          </div>
-          
-          {/* Business Settings */}
-          <div className="bg-zinc-900 border border-zinc-800 p-6">
-            <h2 className="text-xl font-semibold mb-6 border-b border-zinc-800 pb-2">
-              Geschäftsregeln
-            </h2>
-            
-            <div className="space-y-4">
-              {/* Enable Age Verification */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-medium">Altersverifikation aktivieren</h3>
-                  <p className="text-sm text-zinc-400">Prüft das Alter für 18+ Artikel</p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    className="sr-only peer"
-                    checked={settings.enableAgeVerification}
-                    onChange={() => handleToggleChange('enableAgeVerification')}
-                  />
-                  <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-white/50 rounded-none border border-zinc-600 peer-checked:bg-zinc-900 peer-checked:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:border-zinc-600 after:rounded-none after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
-                </label>
-              </div>
-              
-              {/* Enable Loyalty Program */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-medium">Treueprogramm aktivieren</h3>
-                  <p className="text-sm text-zinc-400">Aktiviert Punkte- und Stempelsystem</p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    className="sr-only peer"
-                    checked={settings.enableLoyaltyProgram}
-                    onChange={() => handleToggleChange('enableLoyaltyProgram')}
-                  />
-                  <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-white/50 rounded-none border border-zinc-600 peer-checked:bg-zinc-900 peer-checked:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:border-zinc-600 after:rounded-none after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
-                </label>
-              </div>
-              
-              {/* Enable Credit System */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-medium">Kreditsystem aktivieren</h3>
-                  <p className="text-sm text-zinc-400">Ermöglicht Händlern, Kreditlimits für Kunden festzulegen</p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    className="sr-only peer"
-                    checked={settings.enableCreditSystem}
-                    onChange={() => handleToggleChange('enableCreditSystem')}
-                  />
-                  <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-white/50 rounded-none border border-zinc-600 peer-checked:bg-zinc-900 peer-checked:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:border-zinc-600 after:rounded-none after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
-                </label>
-              </div>
-              
-              {/* Items Per Page */}
+
+        <div className="bg-zinc-900 border border-zinc-800 p-6 max-w-3xl">
+          <h2 className="text-xl font-semibold mb-6 border-b border-zinc-800 pb-2">Governance</h2>
+
+          <div className="space-y-5">
+            <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-medium">Artikel pro Seite</h3>
-                <p className="text-sm text-zinc-400 mb-2">Maximale Anzahl von Artikeln pro Seite</p>
-                <select
-                  value={settings.maxItemsPerPage}
-                  onChange={(e) => handleInputChange('maxItemsPerPage', parseInt(e.target.value))}
-                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent"
+                <h3 className="font-medium">Wartungsmodus</h3>
+                <p className="text-sm text-zinc-400">Nur Admin/Bypass haben Zugriff.</p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="sr-only peer"
+                  checked={settings.is_maintenance_mode}
+                  onChange={(e) => setSettings((s) => ({ ...s, is_maintenance_mode: e.target.checked }))}
+                />
+                <div className="w-11 h-6 bg-zinc-700 border border-zinc-600 peer-checked:bg-zinc-900 peer-checked:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border after:border-zinc-600 after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+              </label>
+            </div>
+
+            <div>
+              <h3 className="font-medium">Händlergebühr (%)</h3>
+              <input
+                type="number"
+                min="0"
+                step="0.1"
+                value={settings.merchant_fee_percentage}
+                onChange={(e) => setSettings((s) => ({ ...s, merchant_fee_percentage: e.target.value }))}
+                className="mt-2 w-full px-3 py-2 bg-zinc-800 border border-zinc-700 text-white focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <h3 className="font-medium">Min. Auszahlung</h3>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={settings.min_payout_amount}
+                onChange={(e) => setSettings((s) => ({ ...s, min_payout_amount: e.target.value }))}
+                className="mt-2 w-full px-3 py-2 bg-zinc-800 border border-zinc-700 text-white focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <h3 className="font-medium">Maintenance Bypass Key</h3>
+              <p className="text-sm text-zinc-400 mb-2">Master-Key für Notzugriff (Header X-CRP-Bypass).</p>
+              <div className="flex gap-2">
+                <input
+                  type={showBypassKey ? 'text' : 'password'}
+                  value={settings.maintenance_bypass_key}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setSettings((s) => ({ ...s, maintenance_bypass_key: v }));
+                    setMaintenanceBypassKey(v);
+                  }}
+                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 text-white focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowBypassKey((v) => !v)}
+                  className="px-3 py-2 border border-zinc-700 bg-black text-white"
+                  title="Anzeigen/Ausblenden"
                 >
-                  <option value={12}>12 Artikel</option>
-                  <option value={24}>24 Artikel</option>
-                  <option value={36}>36 Artikel</option>
-                  <option value={48}>48 Artikel</option>
-                </select>
-              </div>
-              
-              {/* Default Currency */}
-              <div>
-                <h3 className="font-medium">Standardwährung</h3>
-                <p className="text-sm text-zinc-400 mb-2">Währung für alle Preise</p>
-                <select
-                  value={settings.defaultCurrency}
-                  onChange={(e) => handleInputChange('defaultCurrency', e.target.value)}
-                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent"
-                >
-                  <option value="EUR">Euro (€)</option>
-                  <option value="USD">US-Dollar ($)</option>
-                  <option value="GBP">Britisches Pfund (£)</option>
-                  <option value="CHF">Schweizer Franken (CHF)</option>
-                </select>
+                  {showBypassKey ? '🙈' : '👁'}
+                </button>
               </div>
             </div>
           </div>
-          
-          {/* Fees & Taxes */}
-          <div className="bg-zinc-900 border border-zinc-800 p-6 md:col-span-2">
-            <h2 className="text-xl font-semibold mb-6 border-b border-zinc-800 pb-2">
-              Gebühren & Steuern
-            </h2>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Tax Rate */}
-              <div>
-                <h3 className="font-medium">Mehrwertsteuersatz (%)</h3>
-                <p className="text-sm text-zinc-400 mb-2">Standard-Mehrwertsteuersatz für Artikel</p>
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={settings.taxRate}
-                  onChange={(e) => handleInputChange('taxRate', parseFloat(e.target.value))}
-                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent"
-                />
-              </div>
-              
-              {/* Platform Fee */}
-              <div>
-                <h3 className="font-medium">Plattformgebühr (%)</h3>
-                <p className="text-sm text-zinc-400 mb-2">Gebühr für Händler pro Verkauf</p>
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="0.1"
-                  value={settings.platformFee}
-                  onChange={(e) => handleInputChange('platformFee', parseFloat(e.target.value))}
-                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent"
-                />
-              </div>
-              
-              {/* Cash Payment Fee */}
-              <div>
-                <h3 className="font-medium">Barzahlungsgebühr (%)</h3>
-                <p className="text-sm text-zinc-400 mb-2">Zusätzliche Gebühr für Barzahlung</p>
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="0.1"
-                  value={settings.cashPaymentFee}
-                  onChange={(e) => handleInputChange('cashPaymentFee', parseFloat(e.target.value))}
-                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent"
-                />
-              </div>
-              
-              {/* Card Payment Fee */}
-              <div>
-                <h3 className="font-medium">Kartenzahlungsgebühr (%)</h3>
-                <p className="text-sm text-zinc-400 mb-2">Zusätzliche Gebühr für Kartenzahlung</p>
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="0.1"
-                  value={settings.cardPaymentFee}
-                  onChange={(e) => handleInputChange('cardPaymentFee', parseFloat(e.target.value))}
-                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent"
-                />
-              </div>
-              
-              {/* Invoice Payment Fee */}
-              <div>
-                <h3 className="font-medium">Rechnungszahlungsgebühr (%)</h3>
-                <p className="text-sm text-zinc-400 mb-2">Zusätzliche Gebühr für Rechnungszahlung</p>
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="0.1"
-                  value={settings.invoicePaymentFee}
-                  onChange={(e) => handleInputChange('invoicePaymentFee', parseFloat(e.target.value))}
-                  className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent"
-                />
-              </div>
-            </div>
+
+          {feedback && <p className="mt-4 text-sm text-zinc-300">{feedback}</p>}
+
+          <div className="mt-6 flex justify-end">
+            <Button onClick={handleSave} disabled={loading}>
+              {loading ? 'Speichern…' : 'Einstellungen speichern'}
+            </Button>
           </div>
-        </div>
-        
-        {/* Save Button */}
-        <div className="mt-8 flex justify-end">
-          <Button onClick={handleSave}>
-            Einstellungen speichern
-          </Button>
         </div>
       </div>
     </div>

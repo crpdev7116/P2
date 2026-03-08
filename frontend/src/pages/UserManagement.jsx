@@ -524,7 +524,7 @@ const UserManagement = () => {
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
                           <div className="flex justify-end space-x-2">
                             <Button 
-                              size="small"
+                              size="sm"
                               onClick={() => openEditModal(user)}
                               disabled={isLoading}
                             >
@@ -532,7 +532,7 @@ const UserManagement = () => {
                             </Button>
                             {!user.is_banned ? (
                               <Button 
-                                size="small" 
+                                size="sm" 
                                 variant="danger"
                                 onClick={() => toggleUserBan(user.id)}
                                 disabled={isLoading}
@@ -541,7 +541,7 @@ const UserManagement = () => {
                               </Button>
                             ) : (
                               <Button 
-                                size="small" 
+                                size="sm" 
                                 variant="success"
                                 onClick={() => toggleUserBan(user.id)}
                                 disabled={isLoading}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import Button from '../components/Button';
 import QRCode from 'qrcode.react';
@@ -7,6 +7,7 @@ import QRCode from 'qrcode.react';
 const API_URL = 'http://127.0.0.1:8000';
 
 const AccountSettings = () => {
+  const navigate = useNavigate();
   const { user, users, isAuthenticated, hasRole, token, updateUser2FAState } = useAuth();
 
   const fullUserData = user ? users.find((u) => u.id === user.id) : null;
@@ -237,6 +238,76 @@ const AccountSettings = () => {
     });
   };
 
+  const [protectedFields, setProtectedFields] = useState({
+    first_name: '',
+    last_name: '',
+    date_of_birth: ''
+  });
+
+  useEffect(() => {
+    setProtectedFields({
+      first_name: fullUserData?.first_name || '',
+      last_name: fullUserData?.last_name || '',
+      date_of_birth: fullUserData?.date_of_birth
+        ? new Date(fullUserData.date_of_birth).toISOString().split('T')[0]
+        : ''
+    });
+  }, [fullUserData]);
+
+  const submitProtectedFieldChange = async (field) => {
+    setError('');
+    setSuccessMessage('');
+
+    const oldValueRaw =
+      field === 'date_of_birth'
+        ? (fullUserData?.date_of_birth ? new Date(fullUserData.date_of_birth).toISOString().split('T')[0] : '')
+        : String(fullUserData?.[field] || '');
+
+    const newValueRaw = String(protectedFields[field] || '').trim();
+
+    if (!newValueRaw) {
+      setError('Bitte neuen Wert eintragen.');
+      return;
+    }
+
+    if (oldValueRaw === newValueRaw) {
+      setError('Neuer Wert muss sich vom aktuellen Wert unterscheiden.');
+      return;
+    }
+
+    const labels = {
+      first_name: 'Vorname',
+      last_name: 'Nachname',
+      date_of_birth: 'Geburtsdatum'
+    };
+
+    const message = `Änderungsanfrage: ${labels[field]} von "${oldValueRaw || '-'}" zu "${newValueRaw}"`;
+
+    try {
+      const response = await fetch(`${API_URL}/tickets`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          subject: `Profiländerung ${labels[field]}`,
+          category: 'DATA_CHANGE',
+          message
+        })
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.detail || 'Ticket konnte nicht erstellt werden');
+      }
+
+      setSuccessMessage(`Änderungsanfrage für ${labels[field]} wurde als Ticket #${data?.id} gesendet.`);
+    } catch (err) {
+      setError(err.message || 'Fehler beim Senden der Änderungsanfrage');
+    }
+  };
+
   const handleAddSubAccount = async (e) => {
     e.preventDefault();
     setError('');
@@ -361,6 +432,57 @@ const AccountSettings = () => {
                     <div className="flex space-x-3">
                       <label htmlFor="profile-image-upload"><Button as="span">Bild auswählen</Button></label>
                       {profileImage && <Button onClick={handleImageUpload} disabled={isLoading}>{isLoading ? 'Wird hochgeladen...' : 'Hochladen'}</Button>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="border-t border-zinc-800 pt-6">
+                <h3 className="text-lg font-medium mb-4">Geschützte Profildaten</h3>
+                <p className="text-sm text-zinc-400 mb-4">
+                  Vorname, Nachname und Geburtsdatum können nur über ein Support-Ticket geändert werden.
+                </p>
+                <div className="space-y-3">
+                  <div className="bg-zinc-950 border border-zinc-800 px-3 py-3 rounded-lg">
+                    <div className="text-xs text-zinc-400 mb-1">Vorname</div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={protectedFields.first_name}
+                        onChange={(e) => setProtectedFields((p) => ({ ...p, first_name: e.target.value }))}
+                        className="flex-1 px-3 py-2 bg-zinc-900 border border-zinc-700 text-white rounded"
+                        placeholder="Neuer Vorname"
+                      />
+                      <Button variant="secondary" onClick={() => submitProtectedFieldChange('first_name')}>
+                        Ändern
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="bg-zinc-950 border border-zinc-800 px-3 py-3 rounded-lg">
+                    <div className="text-xs text-zinc-400 mb-1">Nachname</div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={protectedFields.last_name}
+                        onChange={(e) => setProtectedFields((p) => ({ ...p, last_name: e.target.value }))}
+                        className="flex-1 px-3 py-2 bg-zinc-900 border border-zinc-700 text-white rounded"
+                        placeholder="Neuer Nachname"
+                      />
+                      <Button variant="secondary" onClick={() => submitProtectedFieldChange('last_name')}>
+                        Ändern
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="bg-zinc-950 border border-zinc-800 px-3 py-3 rounded-lg">
+                    <div className="text-xs text-zinc-400 mb-1">Geburtsdatum</div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="date"
+                        value={protectedFields.date_of_birth}
+                        onChange={(e) => setProtectedFields((p) => ({ ...p, date_of_birth: e.target.value }))}
+                        className="flex-1 px-3 py-2 bg-zinc-900 border border-zinc-700 text-white rounded"
+                      />
+                      <Button variant="secondary" onClick={() => submitProtectedFieldChange('date_of_birth')}>
+                        Ändern
+                      </Button>
                     </div>
                   </div>
                 </div>

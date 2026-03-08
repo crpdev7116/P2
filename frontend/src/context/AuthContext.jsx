@@ -27,6 +27,7 @@ export const AuthProvider = ({ children }) => {
   });
   const [token, setToken] = useState(() => localStorage.getItem('token'));
   const [authLoading, setAuthLoading] = useState(true);
+  const [maintenanceBypassKey, setMaintenanceBypassKey] = useState(() => localStorage.getItem('maintenance_bypass_key') || '');
   
   // Auth modal state
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -51,7 +52,12 @@ export const AuthProvider = ({ children }) => {
     } else {
       localStorage.removeItem('token');
     }
-  }, [user, token]);
+    if (maintenanceBypassKey) {
+      localStorage.setItem('maintenance_bypass_key', maintenanceBypassKey);
+    } else {
+      localStorage.removeItem('maintenance_bypass_key');
+    }
+  }, [user, token, maintenanceBypassKey]);
 
   // Restore session from token on reload (NO hardcoded user id)
   useEffect(() => {
@@ -68,7 +74,7 @@ export const AuthProvider = ({ children }) => {
       }
 
       try {
-        const res = await fetch(`${API_URL}/users/${storedUserId}`, {
+        const res = await fetch(`${API_URL}/users/me`, {
           headers: {
             Authorization: `Bearer ${token}`
           }
@@ -86,7 +92,8 @@ export const AuthProvider = ({ children }) => {
           username: current.username,
           role: String(current.role || '').toUpperCase(),
           has2FA: current.has_2fa,
-          profileImage: current.profile_picture_url
+          profileImage: current.profile_picture_url,
+          is_active: current.is_active !== false
         });
       } catch {
         logout();
@@ -129,16 +136,15 @@ export const AuthProvider = ({ children }) => {
         return false;
       }
 
-      const usersResponse = await fetch(`${API_URL}/users`, {
+      const meResponse = await fetch(`${API_URL}/users/me`, {
         headers: {
           Authorization: `Bearer ${authHeaderToken}`
         }
       });
 
       let backendUser = null;
-      if (usersResponse.ok) {
-        const list = await usersResponse.json();
-        backendUser = Array.isArray(list) ? list.find((u) => u.id === data.user_id) : null;
+      if (meResponse.ok) {
+        backendUser = await meResponse.json();
       }
 
       const apiRole = String(data.role || '').trim().toUpperCase();
@@ -153,14 +159,16 @@ export const AuthProvider = ({ children }) => {
             username: backendUser.username,
             role: apiRole,
             has2FA: backendUser.has_2fa,
-            profileImage: backendUser.profile_picture_url
+            profileImage: backendUser.profile_picture_url,
+            is_active: backendUser.is_active !== false
           }
         : {
             id: data.user_id,
             username,
             role: apiRole,
             has2FA: Boolean(data.has2FA),
-            profileImage: null
+            profileImage: null,
+            is_active: true
           };
 
       if (has2FA) {
@@ -295,7 +303,8 @@ export const AuthProvider = ({ children }) => {
       username: userData.username,
       role: userData.role,
       has2FA: userData.has2FA,
-      profileImage: userData.profileImage
+      profileImage: userData.profileImage,
+      is_active: userData.is_active !== false
     };
     
     setUser(sanitizedUser);
@@ -325,7 +334,8 @@ export const AuthProvider = ({ children }) => {
       has2FA: false,
       twoFactorSecret: null,
       backupCodes: [],
-      profileImage: null
+      profileImage: null,
+      is_active: true
     };
     
     setUsers([...users, newUser]);
@@ -412,6 +422,17 @@ export const AuthProvider = ({ children }) => {
   };
 
   // Context value
+  const withAuthHeaders = (extraHeaders = {}) => {
+    const headers = { ...extraHeaders };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    if (String(user?.role || '').toUpperCase() === 'ADMIN' && maintenanceBypassKey) {
+      headers['X-CRP-Bypass'] = maintenanceBypassKey;
+    }
+    return headers;
+  };
+
   const value = {
     user,
     users,
@@ -433,7 +454,10 @@ export const AuthProvider = ({ children }) => {
     toggleAuthMode,
     setError,
     token,
-    authLoading
+    authLoading,
+    maintenanceBypassKey,
+    setMaintenanceBypassKey,
+    withAuthHeaders
   };
 
   return (

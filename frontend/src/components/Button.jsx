@@ -39,6 +39,7 @@ const Button = ({
   const variantClasses = {
     'default': 'bg-black text-white border border-zinc-800 rounded-lg hover:shadow-lg hover:shadow-indigo-500/20 active:scale-95',
     'active': 'bg-white text-black border border-zinc-800 rounded-lg active:scale-95',
+    'secondary': 'bg-zinc-900 text-white border border-zinc-700 rounded-lg hover:bg-black hover:shadow-lg active:scale-95',
     'danger': 'bg-black text-red-500 border border-red-800 rounded-lg hover:shadow-lg hover:shadow-red-500/20 active:scale-95',
     'success': 'bg-black text-green-500 border border-green-800 rounded-lg hover:shadow-lg hover:shadow-green-500/20 active:scale-95',
     'ghost': 'bg-transparent text-white rounded-lg hover:bg-zinc-900 active:scale-95'
@@ -81,7 +82,7 @@ const Button = ({
 Button.propTypes = {
   children: PropTypes.node.isRequired,
   onClick: PropTypes.func,
-  variant: PropTypes.oneOf(['default', 'active', 'danger', 'success', 'ghost']),
+  variant: PropTypes.oneOf(['default', 'active', 'secondary', 'danger', 'success', 'ghost']),
   size: PropTypes.oneOf(['sm', 'md', 'lg']),
   type: PropTypes.oneOf(['button', 'submit', 'reset']),
   disabled: PropTypes.bool,

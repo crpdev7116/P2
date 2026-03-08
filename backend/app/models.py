@@ -1,6 +1,5 @@
 from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Float, DateTime, Text, Enum, Table, JSON
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime
 import enum
 
@@ -51,6 +50,11 @@ class UserRole(enum.Enum):
     MERCHANT = "merchant"
     CUSTOMER = "customer"
 
+class TicketStatus(enum.Enum):
+    OPEN = "OPEN"
+    WAITING_FOR_REPLY = "WAITING_FOR_REPLY"
+    CLOSED = "CLOSED"
+
 # Models
 class User(Base):
     __tablename__ = "users"
@@ -69,6 +73,17 @@ class User(Base):
     backup_codes = Column(JSON, default=lambda: [])
     is_banned = Column(Boolean, default=False)
     allowed_payment_methods = Column(JSON, default=["CASH", "PAYPAL", "INVOICE"])
+
+    # Invoice / Merchant fee controls
+    is_invoice_allowed = Column(Boolean, default=True)
+    paypal_percent_fee = Column(Float, default=2.49)
+    paypal_fixed_fee = Column(Float, default=0.35)
+    stripe_percent_fee = Column(Float, default=1.5)
+    stripe_fixed_fee = Column(Float, default=0.25)
+    klarna_percent_fee = Column(Float, default=2.99)
+    klarna_fixed_fee = Column(Float, default=0.35)
+    coinpayments_percent_fee = Column(Float, default=0.5)
+    coinpayments_fixed_fee = Column(Float, default=0.0)
     
     # Relationships
     merchant = relationship("Merchant", back_populates="user", uselist=False)
@@ -90,6 +105,10 @@ class Merchant(Base):
     domain_type = Column(Enum(DomainType), default=DomainType.BASIC)
     subdomain = Column(String(50), unique=True)
     custom_domain = Column(String(100), unique=True, nullable=True)
+    address = Column(String(255), nullable=True)
+    phone = Column(String(100), nullable=True)
+    opening_hours = Column(String(255), nullable=True)
+    support_email = Column(String(100), nullable=True)
     
     # Relationships
     user = relationship("User", back_populates="merchant")
@@ -120,9 +139,11 @@ class Category(Base):
     name = Column(String(100), nullable=False)
     description = Column(Text)
     merchant_id = Column(Integer, ForeignKey("merchants.id"))
+    seller_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # NULL = global category
+    age_restriction = Column(Integer, default=0)  # 0, 16, 18
     parent_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     
-    # Age Restriction (Pillar 3)
+    # Backward compatibility with old logic
     is_18_plus = Column(Boolean, default=False)
     
     # Relationships
@@ -151,6 +172,8 @@ class Item(Base):
     # Inventory
     stock_quantity = Column(Integer, default=0)
     sku = Column(String(50), unique=True)
+    discount_percentage = Column(Float, default=0.0)
+    fixed_discount_price = Column(Float, nullable=True)
     
     # Relationships
     merchant = relationship("Merchant", back_populates="items")
@@ -229,6 +252,56 @@ class OrderItem(Base):
     # Relationships
     order = relationship("Order", back_populates="items")
     item = relationship("Item", back_populates="order_items")
+
+class CustomPrice(Base):
+    __tablename__ = "custom_prices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    merchant_id = Column(Integer, ForeignKey("merchants.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
+    price = Column(Float, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    type = Column(String(50), nullable=False)
+    title = Column(String(255), nullable=False)
+    message = Column(Text, nullable=False)
+    link = Column(String(255), nullable=True)
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class Ticket(Base):
+    __tablename__ = "tickets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    assigned_to_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    subject = Column(String(255), nullable=False)
+    category = Column(String(100), nullable=False, default="GENERAL")
+    status = Column(Enum(TicketStatus), default=TicketStatus.OPEN)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class TicketMessage(Base):
+    __tablename__ = "ticket_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ticket_id = Column(Integer, ForeignKey("tickets.id"), nullable=False)
+    sender_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class PlatformSetting(Base):
+    __tablename__ = "platform_settings"
+
+    key = Column(String(100), primary_key=True, unique=True, nullable=False, index=True)
+    value = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class LoyaltyStamp(Base):
     __tablename__ = "loyalty_stamps"

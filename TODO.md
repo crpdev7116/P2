@@ -1,9 +1,42 @@
-# TODO - CRITICAL SYSTEM REPAIR & RESET
+# One-Pass Execution TODO
 
-- [x] Backend: verify_password/get_password_hash auf direkte bcrypt-Logik (passlib-frei) abgesichert ✅
-- [x] Backend: /login Debug-Prints für user_found und password_match hinzugefügt ✅
-- [x] Frontend: Guard gegen /users/None/... in loginStep2 und useBackupCode hinzugefügt ✅
-- [x] Frontend: Error-Handling verbessert (Backend detail-Meldung via setError) ✅
-- [x] Backend: full_reset_admin.py erstellt (delete+recreate admin@crp.com mit ID=1, bcrypt, 2FA/backup reset) ✅
-- [ ] 2FA Token Isolation (pre_auth darf keine geschützten Endpunkte nutzen) — Manuelle Verifizierung durch User ausstehend
-- [ ] Backup-Code One-Time-Use (zweite Nutzung muss fehlschlagen) — Manuelle Verifizierung durch User ausstehend
+- [ ] Patch backend/app/main.py
+  - [ ] Add TicketStatusUpdateRequest model
+  - [ ] Add PATCH /tickets/{ticket_id}/status (ADMIN, MODERATOR only)
+  - [ ] Ensure ticket status change creates notification for ticket owner
+  - [ ] Add GET /merchants endpoint
+  - [ ] Keep notifications endpoints aligned with required response fields
+
+- [ ] Patch frontend/src/pages/tickets/NewTicket.jsx
+  - [ ] Remove assigned target-user field from form and payload
+
+- [ ] Patch frontend/src/App.jsx
+  - [ ] Allow authenticated users to access /tickets/new
+
+- [ ] Patch frontend/src/components/Navbar.jsx
+  - [ ] Restrict admin menu links to ADMIN only
+  - [ ] Add notification bell next to cart
+  - [ ] Add unread counter badge
+  - [ ] Load notifications and show dropdown
+  - [ ] Mark notifications as read via PATCH
+
+- [ ] Patch frontend/src/pages/seller/ShopProfile.jsx
+  - [ ] Show create form when profile missing
+  - [ ] Show storefront-style preview when profile exists
+  - [ ] Add edit flow in modal/tab-like panel
+
+- [ ] Patch frontend/src/pages/seller/ManageProducts.jsx
+  - [ ] Professional tabbed layout (Kategorien / Artikel)
+  - [ ] Ensure POST /items sends all required fields
+  - [ ] Refresh item list immediately after create
+  - [ ] Show success feedback after item creation
+
+- [ ] Patch frontend/src/pages/MarketplaceHome.jsx
+  - [ ] Switch merchant source to GET /merchants
+  - [ ] Keep clean merchant grid
+
+- [ ] Restart backend server (hard restart)
+
+- [ ] Final verification sweep:
+  - [ ] Moderator cannot see Nutzerverwaltung / Plattform Verwaltung
+  - [ ] Notification bell rendered in Navbar
