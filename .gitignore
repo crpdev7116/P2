@@ -1,6 +1,18 @@
+# Abhängigkeiten
 node_modules/
 .venv/
-__pycache__/
-.env
+venv/
+env/
+
+# Python Cache
+**/__pycache__/
+*.py[cod]
+
+# Frontend Build & Tooling
 dist/
+.vite/
+.eslintcache
+
+# OS Files
 .DS_Store
+Thumbs.db
