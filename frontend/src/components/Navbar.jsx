@@ -82,6 +82,10 @@ const Navbar = () => {
     () => (notifications || []).filter((n) => !n.is_read).length,
     [notifications]
   );
+  const securityNotification = useMemo(
+    () => (notifications || []).find((n) => n.type === 'security' && !n.is_read) || null,
+    [notifications]
+  );
 
   const markAsRead = async (id) => {
     try {
@@ -131,7 +135,23 @@ const Navbar = () => {
   };
 
   return (
-    <nav className="bg-zinc-900 border-b border-zinc-800 py-4 relative z-40">
+    <>
+      {isAuthenticated() && securityNotification && (
+        <div className="bg-amber-500 text-amber-950 border-b border-amber-600 py-2 px-4 relative z-50">
+          <div className="container mx-auto flex items-center justify-between gap-4">
+            <p className="font-semibold text-sm flex-1">
+              {securityNotification.title || 'Sicherheitshinweis'}: {securityNotification.message}
+            </p>
+            <Link
+              to={securityNotification.link || '/account'}
+              className="shrink-0 text-amber-950 font-semibold underline text-sm hover:no-underline"
+            >
+              Zu den Einstellungen
+            </Link>
+          </div>
+        </div>
+      )}
+      <nav className="bg-zinc-900 border-b border-zinc-800 py-4 relative z-40">
       <div className="container mx-auto px-4">
         <div className="flex justify-between items-center">
           {/* Logo and site name */}
@@ -141,7 +161,7 @@ const Navbar = () => {
 
           {/* Right side: Cart and Auth */}
           <div className="flex items-center space-x-4">
-            {isAuthenticated() && (
+            {isAuthenticated() && !user?.is_banned && (
               <div className="relative" ref={notifRef}>
                 <button
                   onClick={() => setIsNotifOpen((p) => !p)}
@@ -193,7 +213,8 @@ const Navbar = () => {
               </div>
             )}
 
-            {/* Cart button - ONLY ONE global cart button */}
+            {/* Cart button - nur wenn nicht gesperrt */}
+            {!user?.is_banned && (
             <button
               onClick={openCart}
               className="bg-black text-white border border-zinc-800 px-3 py-2 rounded-lg hover:shadow-lg hover:shadow-indigo-500/20 active:scale-95 transition-all duration-200 relative"
@@ -209,6 +230,7 @@ const Navbar = () => {
                 )}
               </span>
             </button>
+            )}
 
             {/* Auth section - ONLY ONE profile dropdown/login button */}
             {isAuthenticated() ? (
@@ -234,6 +256,30 @@ const Navbar = () => {
                 {isDropdownOpen && (
                   <div className="absolute right-0 mt-2 w-48 bg-black border border-zinc-800 rounded-lg shadow-lg z-50">
                     <ul>
+                      {/* Gesperrte User: nur Tickets */}
+                      {user?.is_banned ? (
+                        <>
+                          <li>
+                            <Link
+                              to="/tickets"
+                              className="block px-4 py-2 text-white hover:bg-zinc-900 first:rounded-t-lg"
+                              onClick={() => setIsDropdownOpen(false)}
+                            >
+                              Tickets
+                            </Link>
+                          </li>
+                          <li className="border-t border-zinc-800 my-1"></li>
+                          <li>
+                            <button
+                              onClick={handleLogout}
+                              className="block w-full text-left px-4 py-2 text-white hover:bg-zinc-900 rounded-b-lg"
+                            >
+                              Logout
+                            </button>
+                          </li>
+                        </>
+                      ) : (
+                        <>
                       {/* All users */}
                       <li>
                         <Link
@@ -355,6 +401,8 @@ const Navbar = () => {
                           Logout
                         </button>
                       </li>
+                        </>
+                      )}
                     </ul>
                   </div>
                 )}
@@ -368,6 +416,7 @@ const Navbar = () => {
         </div>
       </div>
     </nav>
+    </>
   );
 };
 

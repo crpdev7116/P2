@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import Button from '../components/Button';
 
 const UserManagement = () => {
-  const { hasRole } = useAuth();
+  const { hasRole, withAuthHeaders } = useAuth();
   const [users, setUsers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
@@ -22,7 +22,7 @@ const UserManagement = () => {
   const [newUser, setNewUser] = useState({
     username: '',
     email: '',
-    password: '',
+    temporary_password: '',
     role: 'customer'
   });
   const [isLoading, setIsLoading] = useState(false);
@@ -43,7 +43,7 @@ const UserManagement = () => {
     setError('');
     
     try {
-      const res = await fetch(`${API_URL}/users`, { mode: 'cors' });
+      const res = await fetch(`${API_URL}/users`, { mode: 'cors', headers: withAuthHeaders() });
       
       if (!res.ok) {
         const err = await res.json();
@@ -160,7 +160,7 @@ const UserManagement = () => {
     setNewUser({
       username: '',
       email: '',
-      password: '',
+      temporary_password: '',
       role: 'customer'
     });
     setError('');
@@ -236,7 +236,7 @@ const UserManagement = () => {
     }
   };
 
-  // Create new user
+  // Create new user (Admin: temporary_password, must_change_password)
   const createUser = async (e) => {
     e.preventDefault();
     
@@ -250,8 +250,8 @@ const UserManagement = () => {
       return;
     }
 
-    if (!newUser.password.trim() || newUser.password.length < 6) {
-      setError('Passwort muss mindestens 6 Zeichen lang sein');
+    if (!newUser.temporary_password?.trim() || newUser.temporary_password.length < 6) {
+      setError('Temporäres Passwort muss mindestens 6 Zeichen lang sein');
       return;
     }
 
@@ -260,38 +260,53 @@ const UserManagement = () => {
     
     try {
       const userData = {
-        username: newUser.username,
-        email: newUser.email,
-        password: newUser.password,
+        username: newUser.username.trim(),
+        email: newUser.email.trim(),
+        temporary_password: newUser.temporary_password,
         role: newUser.role
       };
       
-      const res = await fetch(`${API_URL}/users`, {
+      const res = await fetch(`${API_URL}/admin/users`, {
         method: 'POST',
         mode: 'cors',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(userData)
       });
       
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const err = await res.json();
-        console.error("API ERROR:", err);
-        throw new Error(err.detail || 'Failed to create user');
+        throw new Error(data.detail || 'Benutzer konnte nicht erstellt werden');
       }
       
-      const createdUser = await res.json();
-      
-      // Add the new user to the local state
-      setUsers(prevUsers => [...prevUsers, createdUser]);
-      
-      setSuccessMessage('Benutzer erfolgreich erstellt');
-      setTimeout(() => setSuccessMessage(''), 3000);
+      setUsers(prevUsers => [...prevUsers, data]);
+      setSuccessMessage('Benutzer erfolgreich erstellt (Temp-Passwort; Nutzer muss beim ersten Login Passwort ändern und Profil vervollständigen).');
+      setTimeout(() => setSuccessMessage(''), 5000);
       closeCreateModal();
     } catch (err) {
       console.error("Error creating user:", err);
-      setError(err.message || 'Failed to create user');
+      setError(err.message || 'Benutzer konnte nicht erstellt werden');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 2FA zurücksetzen (nur Admin)
+  const reset2FA = async (userId) => {
+    if (!window.confirm('2FA für diesen Nutzer wirklich zurücksetzen? Das Passwort bleibt unverändert.')) return;
+    setIsLoading(true);
+    setError('');
+    try {
+      const res = await fetch(`${API_URL}/admin/users/${userId}/reset-2fa`, {
+        method: 'PATCH',
+        headers: withAuthHeaders()
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || '2FA-Reset fehlgeschlagen');
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, has_2fa: false } : u));
+      setSuccessMessage('2FA wurde zurückgesetzt.');
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      setError(err.message || '2FA-Reset fehlgeschlagen');
     } finally {
       setIsLoading(false);
     }
@@ -503,7 +518,7 @@ const UserManagement = () => {
                           </span>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm">
-                          {user.has2FA ? (
+                          {(user.has_2fa ?? user.has2FA) ? (
                             <span className="text-green-400">Aktiviert</span>
                           ) : (
                             <span className="text-red-400">Deaktiviert</span>
@@ -519,10 +534,10 @@ const UserManagement = () => {
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-zinc-400">
-                          {user.createdAt ? new Date(user.createdAt).toLocaleDateString() : '-'}
+                          {(user.created_at || user.createdAt) ? new Date(user.created_at || user.createdAt).toLocaleDateString() : '-'}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
-                          <div className="flex justify-end space-x-2">
+                          <div className="flex justify-end flex-wrap gap-2">
                             <Button 
                               size="sm"
                               onClick={() => openEditModal(user)}
@@ -530,6 +545,16 @@ const UserManagement = () => {
                             >
                               Bearbeiten
                             </Button>
+                            {(user.has_2fa ?? user.has2FA) && (
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => reset2FA(user.id)}
+                                disabled={isLoading}
+                              >
+                                2FA zurücksetzen
+                              </Button>
+                            )}
                             {!user.is_banned ? (
                               <Button 
                                 size="sm" 
@@ -707,14 +732,14 @@ const UserManagement = () => {
               
               <div className="mb-4">
                 <label className="block text-sm font-medium text-zinc-300 mb-1">
-                  Passwort
+                  Temporäres Passwort
                 </label>
                 <input
                   type="password"
-                  value={newUser.password}
-                  onChange={(e) => handleNewUserChange('password', e.target.value)}
+                  value={newUser.temporary_password}
+                  onChange={(e) => handleNewUserChange('temporary_password', e.target.value)}
                   className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 text-white focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent"
-                  placeholder="Passwort eingeben"
+                  placeholder="Mind. 6 Zeichen – Nutzer muss es beim ersten Login ändern"
                   required
                   minLength={6}
                 />

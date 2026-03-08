@@ -5,7 +5,7 @@ from datetime import datetime
 DB_PATH = "backend/marketplace.db"
 
 USERNAME = "crp_admin"
-EMAIL = "crp_admin@crp.local"
+EMAIL = "crp_admin@test.com"
 PASSWORD = "AdminPass2026!"
 ROLE = "ADMIN"
 

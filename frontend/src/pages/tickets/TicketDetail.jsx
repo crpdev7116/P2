@@ -14,6 +14,7 @@ const TicketDetail = () => {
   const [message, setMessage] = useState('');
   const [statusBusy, setStatusBusy] = useState(false);
   const [msgBusy, setMsgBusy] = useState(false);
+  const [applyBusy, setApplyBusy] = useState(false);
   const [error, setError] = useState('');
 
   const load = async () => {
@@ -80,6 +81,27 @@ const TicketDetail = () => {
     }
   };
 
+  const applyChange = async () => {
+    if (!window.confirm('Änderung aus diesem Ticket in der Datenbank übernehmen und Ticket schließen?')) return;
+    setApplyBusy(true);
+    setError('');
+    try {
+      const res = await fetch(`${API_URL}/admin/tickets/${id}/apply`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.detail || 'Übernahme fehlgeschlagen');
+      await load();
+    } catch (e) {
+      setError(e.message || 'Fehler');
+    } finally {
+      setApplyBusy(false);
+    }
+  };
+
+  const isChangeRequestTicket = ticket && ['SHOP_NAME_CHANGE', 'PROFILE_CHANGE', 'ÄNDERUNGSWUNSCH', 'CHANGE_REQUEST'].includes(String(ticket.category || '').toUpperCase());
+
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
       <div className="container mx-auto px-4 py-8 max-w-4xl">
@@ -99,10 +121,15 @@ const TicketDetail = () => {
             </div>
 
             {isAdminOrModerator && (
-              <div className="border border-zinc-700 bg-zinc-900 p-3 rounded-lg flex gap-2 flex-wrap">
+              <div className="border border-zinc-700 bg-zinc-900 p-3 rounded-lg flex gap-2 flex-wrap items-center">
                 <Button onClick={() => setStatus('OPEN')} disabled={statusBusy}>Öffnen</Button>
                 <Button onClick={() => setStatus('WAITING_FOR_REPLY')} disabled={statusBusy}>Warten auf Antwort</Button>
                 <Button onClick={() => setStatus('CLOSED')} disabled={statusBusy}>Schließen</Button>
+                {isChangeRequestTicket && ticket?.status !== 'CLOSED' && hasRole('admin') && (
+                  <Button onClick={applyChange} disabled={applyBusy} className="bg-green-900 border-green-700 text-green-100">
+                    {applyBusy ? 'Wird übernommen...' : 'Änderung übernehmen'}
+                  </Button>
+                )}
               </div>
             )}
 

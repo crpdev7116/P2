@@ -8,10 +8,11 @@ const API_URL = 'http://127.0.0.1:8000';
 
 const AccountSettings = () => {
   const navigate = useNavigate();
-  const { user, users, isAuthenticated, hasRole, token, updateUser2FAState } = useAuth();
+  const { user, users, isAuthenticated, hasRole, token, updateUser2FAState, withAuthHeaders } = useAuth();
 
   const fullUserData = user ? users.find((u) => u.id === user.id) : null;
 
+  const [securityNotification, setSecurityNotification] = useState(null);
   const [profileImage, setProfileImage] = useState(null);
   const [previewImage, setPreviewImage] = useState(null);
 
@@ -46,6 +47,23 @@ const AccountSettings = () => {
       setSubAccounts(fullUserData.subAccounts || []);
     }
   }, [fullUserData]);
+
+  useEffect(() => {
+    if (!isAuthenticated() || !token) return;
+    const load = async () => {
+      try {
+        const res = await fetch(`${API_URL}/notifications`, { headers: withAuthHeaders() });
+        const data = await res.json().catch(() => []);
+        if (!res.ok) return;
+        const list = Array.isArray(data) ? data : [];
+        const security = list.find((n) => n.type === 'security' && !n.is_read);
+        setSecurityNotification(security || null);
+      } catch {
+        setSecurityNotification(null);
+      }
+    };
+    load();
+  }, [isAuthenticated(), token, withAuthHeaders]);
 
   const handleImageChange = (e) => {
     const file = e.target.files?.[0];
@@ -365,6 +383,12 @@ const AccountSettings = () => {
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
       <div className="container mx-auto px-4 py-8">
+        {securityNotification && (
+          <div className="mb-6 p-4 bg-amber-400 text-amber-950 border-2 border-amber-500 rounded-lg shadow-lg">
+            <p className="font-bold">Sicherheitshinweis</p>
+            <p className="text-sm mt-1">{securityNotification.message || 'Deine Zwei-Faktor-Authentifizierung wurde von einem Administrator zurückgesetzt. Bitte aktiviere sie zu deinem Schutz in den Einstellungen erneut.'}</p>
+          </div>
+        )}
         <div className="mb-8">
           <Link to="/" className="text-zinc-400 hover:text-white transition-colors">
             ← Zurück zur Startseite

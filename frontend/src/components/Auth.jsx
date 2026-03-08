@@ -21,6 +21,14 @@ const Auth = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [email, setEmail] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [address, setAddress] = useState('');
+  const [postalCode, setPostalCode] = useState('');
+  const [city, setCity] = useState('');
+  const [birthday, setBirthday] = useState('');
+  const [phone, setPhone] = useState('');
   const [twoFactorCode, setTwoFactorCode] = useState('');
   const [backupCode, setBackupCode] = useState('');
   const [role, setRole] = useState('customer');
@@ -34,6 +42,14 @@ const Auth = () => {
       setUsername('');
       setPassword('');
       setConfirmPassword('');
+      setEmail('');
+      setFirstName('');
+      setLastName('');
+      setAddress('');
+      setPostalCode('');
+      setCity('');
+      setBirthday('');
+      setPhone('');
       setTwoFactorCode('');
       setBackupCode('');
       setRole('customer');
@@ -120,33 +136,44 @@ const Auth = () => {
   };
 
   // Handle registration
-  const handleRegister = (e) => {
+  const handleRegister = async (e) => {
     e.preventDefault();
     setLocalError('');
     setError('');
     
-    // Basic validation
     if (!username.trim()) {
       setLocalError('Benutzername ist erforderlich');
       return;
     }
-    
+    if (!email.trim()) {
+      setLocalError('E-Mail ist erforderlich (für Support/Inkasso)');
+      return;
+    }
     if (!password.trim() || password.length < 6) {
       setLocalError('Passwort muss mindestens 6 Zeichen lang sein');
       return;
     }
-    
     if (password !== confirmPassword) {
       setLocalError('Passwörter stimmen nicht überein');
       return;
     }
     
     setIsSubmitting(true);
-    
-    // Register user
-    registerUser(username, password, role);
-    
+    const ok = await registerUser({
+      username: username.trim(),
+      email: email.trim(),
+      password,
+      role,
+      first_name: firstName.trim() || null,
+      last_name: lastName.trim() || null,
+      address: address.trim() || null,
+      postal_code: postalCode.trim() || null,
+      city: city.trim() || null,
+      birthday: birthday || null,
+      phone: phone.trim() || null
+    });
     setIsSubmitting(false);
+    if (!ok) setLocalError('Registrierung fehlgeschlagen');
   };
 
   // Toggle between 2FA code and backup code inputs
@@ -389,6 +416,96 @@ const Auth = () => {
                 className="w-full px-3 py-2 bg-zinc-900 border border-zinc-800 text-white focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent"
                 placeholder={role === 'merchant' ? 'Shopname eingeben' : 'Benutzername eingeben'}
               />
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-zinc-300 mb-1">E-Mail (Support/Inkasso)</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full px-3 py-2 bg-zinc-900 border border-zinc-800 text-white focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent"
+                placeholder="E-Mail"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-1">Vorname</label>
+                <input
+                  type="text"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  className="w-full px-3 py-2 bg-zinc-900 border border-zinc-800 text-white focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent"
+                  placeholder="Vorname"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-1">Nachname</label>
+                <input
+                  type="text"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  className="w-full px-3 py-2 bg-zinc-900 border border-zinc-800 text-white focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent"
+                  placeholder="Nachname"
+                />
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-zinc-300 mb-1">Adresse</label>
+              <input
+                type="text"
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                className="w-full px-3 py-2 bg-zinc-900 border border-zinc-800 text-white focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent"
+                placeholder="Straße, Hausnummer"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-1">PLZ</label>
+                <input
+                  type="text"
+                  value={postalCode}
+                  onChange={(e) => setPostalCode(e.target.value)}
+                  className="w-full px-3 py-2 bg-zinc-900 border border-zinc-800 text-white focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent"
+                  placeholder="PLZ"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-1">Ort</label>
+                <input
+                  type="text"
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  className="w-full px-3 py-2 bg-zinc-900 border border-zinc-800 text-white focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent"
+                  placeholder="Ort"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-1">Geburtstag</label>
+                <input
+                  type="date"
+                  value={birthday}
+                  onChange={(e) => setBirthday(e.target.value)}
+                  className="w-full px-3 py-2 bg-zinc-900 border border-zinc-800 text-white focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-zinc-300 mb-1">Handynummer</label>
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  className="w-full px-3 py-2 bg-zinc-900 border border-zinc-800 text-white focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-transparent"
+                  placeholder="+49 ..."
+                />
+              </div>
             </div>
             
             {/* Password field */}

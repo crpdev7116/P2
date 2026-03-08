@@ -68,7 +68,7 @@ def get_db():
 # Pydantic models for request/response
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from enum import Enum
 
 # Enums
@@ -98,6 +98,13 @@ class UserRoleEnum(str, Enum):
 class UserBase(BaseModel):
     username: str
     email: EmailStr
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    address: Optional[str] = None
+    postal_code: Optional[str] = None
+    city: Optional[str] = None
+    birthday: Optional[date] = None
+    phone: Optional[str] = None
 
 class UserCreate(UserBase):
     password: str
@@ -115,11 +122,28 @@ class LoginResponse(BaseModel):
     user_id: int
     role: str
     has2FA: bool
+    must_change_password: bool = False
+    profile_complete: bool = True
 
 class UserUpdate(BaseModel):
     username: Optional[str] = None
     email: Optional[EmailStr] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    address: Optional[str] = None
+    postal_code: Optional[str] = None
+    city: Optional[str] = None
+    birthday: Optional[date] = None
+    phone: Optional[str] = None
     allowed_payment_methods: Optional[List[str]] = None
+
+class AdminUserCreate(BaseModel):
+    """Admin erstellt User mit temporärem Passwort."""
+    username: str
+    email: EmailStr
+    temporary_password: str
+    role: Optional[UserRoleEnum] = UserRoleEnum.CUSTOMER
+    role_id: Optional[int] = None
 
 class SubAccountCreateRequest(BaseModel):
     username: str
@@ -135,6 +159,8 @@ class UserResponse(UserBase):
     id: int
     role: UserRoleEnum
     created_at: datetime
+    must_change_password: bool = False
+    profile_complete: bool = False
     profile_picture_url: Optional[str] = None
     profile_picture: Optional[str] = None
     is_banned: bool
@@ -162,6 +188,13 @@ class BackupCodeVerifyRequest(BaseModel):
     code: str
 
 # Item models
+class PreorderLeadTimeUnitEnum(str, Enum):
+    MINUTES = "minutes"
+    HOURS = "hours"
+    DAYS = "days"
+    WEEKS = "weeks"
+
+
 class ItemBase(BaseModel):
     name: str
     description: Optional[str] = None
@@ -171,17 +204,61 @@ class ItemBase(BaseModel):
     age_restriction: int = 0
     stock_quantity: int = 0
     sku: str
+    # Vorbestellung
+    preorder_lead_time_value: Optional[int] = None
+    preorder_lead_time_unit: Optional[PreorderLeadTimeUnitEnum] = None
+    # Abo
+    is_subscription_eligible: bool = False
+    allowed_delivery_methods: Optional[List[str]] = None  # z.B. ["pickup", "shipping"]
+    subscription_shipping_cost: Optional[float] = None
+
 
 class ItemCreate(ItemBase):
     category_ids: List[int]
+    # Nur für Seller sichtbar – darf in Kunden-Response nicht vorkommen
+    supplier_delivery_time: Optional[str] = None
+
 
 class ItemResponse(ItemBase):
+    """Response für Kunden – supplier_delivery_time wird bewusst ausgeschlossen."""
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     merchant_id: int
     created_at: datetime
     updated_at: datetime
+    # supplier_delivery_time NICHT enthalten (nur Seller/Admin)
+
+
+class ItemResponseForSeller(ItemBase):
+    """Response für Seller/Admin – enthält supplier_delivery_time."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    merchant_id: int
+    created_at: datetime
+    updated_at: datetime
+    supplier_delivery_time: Optional[str] = None
+    category_ids: List[int] = []
+
+
+class ItemUpdate(BaseModel):
+    """Update-Schema für Artikel (Seller)."""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    price_standard: Optional[float] = None
+    price_preorder: Optional[float] = None
+    price_subscription: Optional[float] = None
+    age_restriction: Optional[int] = None
+    stock_quantity: Optional[int] = None
+    sku: Optional[str] = None
+    preorder_lead_time_value: Optional[int] = None
+    preorder_lead_time_unit: Optional[PreorderLeadTimeUnitEnum] = None
+    supplier_delivery_time: Optional[str] = None
+    is_subscription_eligible: Optional[bool] = None
+    allowed_delivery_methods: Optional[List[str]] = None
+    subscription_shipping_cost: Optional[float] = None
+    category_ids: Optional[List[int]] = None
 
 # Order models
 class OrderItemBase(BaseModel):
@@ -219,6 +296,36 @@ class OrderResponse(BaseModel):
     dhl_tracking_number: Optional[str] = None
     items: List[OrderItemResponse]
 
+
+class SellerOrderItemResponse(BaseModel):
+    """Order-Item für Seller-Ansicht inkl. Artikelname und Lieferzeit vom Großhändler."""
+    id: int
+    order_id: int
+    item_id: int
+    quantity: int
+    price_per_unit: float
+    price_type: Optional[str] = "standard"
+    item_name: str = ""
+    supplier_delivery_time: Optional[str] = None
+
+
+class SellerOrderResponse(BaseModel):
+    """Bestellübersicht für Seller – Artikel mit supplier_delivery_time."""
+    id: int
+    merchant_id: int
+    customer_id: int
+    order_date: datetime
+    status: OrderStatusEnum
+    payment_method: PaymentMethodEnum
+    total_amount: float
+    merchant_amount: Optional[float] = None
+    platform_commission: Optional[float] = None
+    pickup_pin: Optional[str] = None
+    pickup_qr: Optional[str] = None
+    pickup_barcode: Optional[str] = None
+    dhl_tracking_number: Optional[str] = None
+    items: List[SellerOrderItemResponse]
+
 # Customer models
 class CustomerBase(BaseModel):
     name: str
@@ -244,6 +351,27 @@ class CustomerResponse(CustomerBase):
 class CustomerCreditUpdate(BaseModel):
     credit_limit_euro: float = Field(..., ge=0)
 
+class SellerCustomerUpdate(BaseModel):
+    """Pro Kunde einstellbare Zahlungsmethoden und Rechnungslimit (Seller)."""
+    allowed_payment_methods: Optional[List[str]] = None
+    credit_limit_euro: Optional[float] = Field(None, ge=0)
+
+class SellerCustomerResponse(BaseModel):
+    """Kunde aus Sicht des Sellers (nur Kunden, die bei diesem Seller gekauft haben)."""
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    merchant_id: int
+    user_id: Optional[int] = None
+    name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    username: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    credit_limit_euro: float
+    current_credit_used: float
+    allowed_payment_methods: List[str]
+
 class PasswordUpdateRequest(BaseModel):
     old_password: str
     new_password: str
@@ -260,10 +388,12 @@ class MerchantFeesUpdate(BaseModel):
     coinpayments_fixed_fee: float = Field(..., ge=0)
 
 class TicketCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     subject: str
     category: str = "GENERAL"
     message: str
     assigned_to_user_id: Optional[int] = None
+    for_user_id: Optional[int] = None  # Nur Admin/Mod: Ticket für diesen User anlegen
 
 class TicketMessageCreateRequest(BaseModel):
     message: str
@@ -289,6 +419,11 @@ class MerchantProfileBase(BaseModel):
     phone: Optional[str] = None
     opening_hours: Optional[str] = None
     support_email: Optional[EmailStr] = None
+    imprint: Optional[str] = None
+    instagram_url: Optional[str] = None
+    tiktok_url: Optional[str] = None
+    website_url: Optional[str] = None
+    shop_image_url: Optional[str] = None
 
 class MerchantProfileCreate(MerchantProfileBase):
     pass
@@ -300,6 +435,11 @@ class MerchantProfileUpdate(BaseModel):
     phone: Optional[str] = None
     opening_hours: Optional[str] = None
     support_email: Optional[EmailStr] = None
+    imprint: Optional[str] = None
+    instagram_url: Optional[str] = None
+    tiktok_url: Optional[str] = None
+    website_url: Optional[str] = None
+    shop_image_url: Optional[str] = None
 
 class MerchantProfileResponse(BaseModel):
     id: int
@@ -314,6 +454,11 @@ class MerchantProfileResponse(BaseModel):
     subdomain: Optional[str] = None
     package: Optional[str] = None
     domain_type: Optional[str] = None
+    imprint: Optional[str] = None
+    instagram_url: Optional[str] = None
+    tiktok_url: Optional[str] = None
+    website_url: Optional[str] = None
+    shop_image_url: Optional[str] = None
 
 # Helper functions
 def generate_random_string(length=10):
@@ -388,6 +533,15 @@ def user_to_response(user, db: Optional[Session] = None):
         "id": user.id,
         "username": user.username,
         "email": user.email,
+        "first_name": getattr(user, "first_name", None),
+        "last_name": getattr(user, "last_name", None),
+        "address": getattr(user, "address", None),
+        "postal_code": getattr(user, "postal_code", None),
+        "city": getattr(user, "city", None),
+        "birthday": getattr(user, "birthday", None),
+        "phone": getattr(user, "phone", None),
+        "must_change_password": bool(getattr(user, "must_change_password", False)),
+        "profile_complete": bool(getattr(user, "profile_complete", False)),
         "role": user.role.value,
         "created_at": user.created_at,
         "profile_picture_url": pic,
@@ -477,7 +631,31 @@ def ensure_runtime_schema(db: Session):
         )
         """,
         "ALTER TABLE tickets ADD COLUMN assigned_to_user_id INTEGER",
-        "ALTER TABLE notifications ADD COLUMN link VARCHAR(255)"
+        "ALTER TABLE notifications ADD COLUMN link VARCHAR(255)",
+        "ALTER TABLE users ADD COLUMN first_name VARCHAR(100)",
+        "ALTER TABLE users ADD COLUMN last_name VARCHAR(100)",
+        "ALTER TABLE users ADD COLUMN address VARCHAR(255)",
+        "ALTER TABLE users ADD COLUMN postal_code VARCHAR(20)",
+        "ALTER TABLE users ADD COLUMN city VARCHAR(100)",
+        "ALTER TABLE users ADD COLUMN birthday DATE",
+        "ALTER TABLE users ADD COLUMN phone VARCHAR(50)",
+        "ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN profile_complete BOOLEAN DEFAULT 0",
+        "ALTER TABLE merchants ADD COLUMN description TEXT",
+        "ALTER TABLE merchants ADD COLUMN imprint TEXT",
+        "ALTER TABLE merchants ADD COLUMN instagram_url VARCHAR(255)",
+        "ALTER TABLE merchants ADD COLUMN tiktok_url VARCHAR(255)",
+        "ALTER TABLE merchants ADD COLUMN website_url VARCHAR(255)",
+        "ALTER TABLE merchants ADD COLUMN shop_image_url VARCHAR(255)",
+        "ALTER TABLE customers ADD COLUMN allowed_payment_methods TEXT",
+        "ALTER TABLE categories ADD COLUMN display_order INTEGER DEFAULT 0",
+        "ALTER TABLE items ADD COLUMN display_order INTEGER DEFAULT 0",
+        "ALTER TABLE items ADD COLUMN preorder_lead_time_value INTEGER",
+        "ALTER TABLE items ADD COLUMN preorder_lead_time_unit VARCHAR(20)",
+        "ALTER TABLE items ADD COLUMN supplier_delivery_time VARCHAR(100)",
+        "ALTER TABLE items ADD COLUMN is_subscription_eligible BOOLEAN DEFAULT 0",
+        "ALTER TABLE items ADD COLUMN allowed_delivery_methods TEXT",
+        "ALTER TABLE items ADD COLUMN subscription_shipping_cost FLOAT",
     ]
     for sql in patches:
         try:
@@ -536,6 +714,40 @@ def notify_user(db: Session, user_id: int, n_type: str, title: str, message: str
 def read_root():
     return {"message": "Welcome to the B2B2C Marketplace API"}
 
+
+@app.get("/admin/users/search")
+def admin_users_search(
+    q: str = Query(..., min_length=1),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Admin/Mod: User-Suche (username, email, first_name, last_name). MUSS vor allen /admin/users/{user_id}-Routen stehen."""
+    token_payload = decode_bearer_token(authorization)
+    role = str((token_payload.get("role") or "")).upper()
+    if role not in ("ADMIN", "MODERATOR"):
+        raise HTTPException(status_code=403, detail="Nur Admin/Moderator")
+    pattern = f"%{(q or '').strip()}%"
+    stmt = (
+        select(models.User)
+        .where(
+            or_(
+                models.User.username.ilike(pattern),
+                models.User.email.ilike(pattern),
+                models.User.first_name.ilike(pattern),
+                models.User.last_name.ilike(pattern),
+            )
+        )
+        .order_by(models.User.username.asc())
+        .limit(20)
+    )
+    result = db.execute(stmt)
+    rows = result.scalars().all() if hasattr(result, "scalars") else result.all()
+    return [
+        {"id": u.id, "username": u.username, "email": u.email, "first_name": getattr(u, "first_name", None) or None, "last_name": getattr(u, "last_name", None) or None}
+        for u in (rows or [])
+    ]
+
+
 @app.post("/login", response_model=LoginResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
     """
@@ -571,6 +783,9 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 
     has_2fa = bool(getattr(db_user, "two_factor_secret", None))
 
+    must_change = bool(getattr(db_user, "must_change_password", False))
+    profile_ok = bool(getattr(db_user, "profile_complete", True))
+
     if has_2fa:
         pre_auth_token = create_jwt_token(
             user_id=db_user.id,
@@ -585,6 +800,8 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
             "user_id": db_user.id,
             "role": role_name,
             "has2FA": True,
+            "must_change_password": must_change,
+            "profile_complete": profile_ok,
         }
 
     access_token = create_jwt_token(
@@ -600,6 +817,8 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         "user_id": db_user.id,
         "role": role_name,
         "has2FA": False,
+        "must_change_password": must_change,
+        "profile_complete": profile_ok,
     }
 
 @app.get("/welcome")
@@ -640,6 +859,63 @@ def get_current_user_me(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user_to_response(user, db)
+
+
+@app.patch("/users/me", response_model=UserResponse)
+def update_current_user_profile(
+    payload: UserUpdate,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Eigenes Profil aktualisieren (Profilfelder, ohne Rolle)."""
+    token_payload = decode_bearer_token(authorization)
+    user_id = int(token_payload.get("user_id", -1))
+    db_user = db.execute(select(models.User).where(models.User.id == user_id)).scalar_one_or_none()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if payload.username is not None:
+        existing = db.execute(
+            select(models.User).where(
+                models.User.username == payload.username,
+                models.User.id != user_id
+            )
+        ).scalar_one_or_none()
+        if existing:
+            raise HTTPException(status_code=400, detail="Username bereits vergeben")
+        db_user.username = payload.username
+    if payload.email is not None:
+        existing = db.execute(
+            select(models.User).where(
+                models.User.email == payload.email,
+                models.User.id != user_id
+            )
+        ).scalar_one_or_none()
+        if existing:
+            raise HTTPException(status_code=400, detail="E-Mail bereits vergeben")
+        db_user.email = payload.email
+    if payload.allowed_payment_methods is not None:
+        db_user.allowed_payment_methods = payload.allowed_payment_methods
+    for field in ("first_name", "last_name", "address", "postal_code", "city", "birthday", "phone"):
+        val = getattr(payload, field, None)
+        if val is not None:
+            if field == "birthday":
+                setattr(db_user, field, val)
+            else:
+                setattr(db_user, field, (val or "").strip() or None)
+    def _profile_complete(u) -> bool:
+        return bool(
+            (getattr(u, "first_name") or "").strip()
+            and (getattr(u, "last_name") or "").strip()
+            and (getattr(u, "address") or "").strip()
+            and (getattr(u, "postal_code") or "").strip()
+            and (getattr(u, "city") or "").strip()
+            and getattr(u, "birthday")
+            and (getattr(u, "phone") or "").strip()
+        )
+    db_user.profile_complete = _profile_complete(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return user_to_response(db_user, db)
 
 @app.get("/users/{user_id}", response_model=UserResponse)
 def get_user(user_id: int = Path(...), db: Session = Depends(get_db)):
@@ -685,14 +961,35 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
     else:
         resolved_role = models.UserRole.CUSTOMER
 
+    def _profile_complete(u) -> bool:
+        return bool(
+            (getattr(u, "first_name") or "").strip()
+            and (getattr(u, "last_name") or "").strip()
+            and (getattr(u, "address") or "").strip()
+            and (getattr(u, "postal_code") or "").strip()
+            and (getattr(u, "city") or "").strip()
+            and getattr(u, "birthday")
+            and (getattr(u, "phone") or "").strip()
+        )
+
     hashed_password = get_password_hash(user.password)
     db_user = models.User(
         username=user.username,
         email=user.email,
         password_hash=hashed_password,
         role=resolved_role,
-        allowed_payment_methods=["CASH", "PAYPAL", "INVOICE"]
+        allowed_payment_methods=["CASH", "PAYPAL", "INVOICE"],
+        first_name=(user.first_name or "").strip() or None,
+        last_name=(user.last_name or "").strip() or None,
+        address=(user.address or "").strip() or None,
+        postal_code=(user.postal_code or "").strip() or None,
+        city=(user.city or "").strip() or None,
+        birthday=user.birthday,
+        phone=(user.phone or "").strip() or None,
+        must_change_password=False,
+        profile_complete=False,
     )
+    db_user.profile_complete = _profile_complete(db_user)
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
@@ -739,6 +1036,26 @@ def update_user(
     
     if user_update.allowed_payment_methods is not None:
         db_user.allowed_payment_methods = user_update.allowed_payment_methods
+
+    for field in ("first_name", "last_name", "address", "postal_code", "city", "birthday", "phone"):
+        val = getattr(user_update, field, None)
+        if val is not None:
+            if field == "birthday":
+                setattr(db_user, field, val)
+            else:
+                setattr(db_user, field, (val or "").strip() or None)
+
+    def _profile_complete(u) -> bool:
+        return bool(
+            (getattr(u, "first_name") or "").strip()
+            and (getattr(u, "last_name") or "").strip()
+            and (getattr(u, "address") or "").strip()
+            and (getattr(u, "postal_code") or "").strip()
+            and (getattr(u, "city") or "").strip()
+            and getattr(u, "birthday")
+            and (getattr(u, "phone") or "").strip()
+        )
+    db_user.profile_complete = _profile_complete(db_user)
     
     db.commit()
     db.refresh(db_user)
@@ -956,6 +1273,7 @@ def update_my_password(
     if payload.new_password != payload.confirm_password:
         raise HTTPException(status_code=400, detail="Passwort-Bestätigung stimmt nicht überein")
     db_user.password_hash = get_password_hash(payload.new_password)
+    db_user.must_change_password = False
     db.commit()
     return {"message": "Passwort erfolgreich geändert"}
 
@@ -1119,17 +1437,10 @@ async def enforce_ban_restrictions(request: Request, call_next):
             return await call_next(request)
 
         if bool(getattr(db_user, "is_banned", False)):
-            allowed_paths = (
-                "/tickets",
-                "/notifications",
-                "/notifications/unread-count",
-                "/notifications/read-all",
-                "/login",
-                "/users/me",
-            )
-            if path.startswith(allowed_paths):
+            # Gesperrte User: nur GET/POST/PATCH auf /tickets und /users/me
+            if path.startswith("/tickets") or path == "/users/me" or path.startswith("/users/me/"):
                 return await call_next(request)
-            return JSONResponse(status_code=403, content={"detail": "Banned users can only access tickets"})
+            return JSONResponse(status_code=403, content={"detail": "Gesperrte Nutzer können nur Tickets und das eigene Profil nutzen."})
 
         if hasattr(db_user, "is_active") and bool(getattr(db_user, "is_active", True)) is False:
             restricted_allowed_paths = (
@@ -1196,11 +1507,13 @@ def create_item(item: ItemCreate, merchant_id: int = Query(...), db: Session = D
     if item_count >= merchant.get_item_limit():
         raise HTTPException(status_code=403, detail=f"Item limit reached for package {merchant.package}")
     
-    # Create new item
-    db_item = models.Item(
-        **item.model_dump(exclude={"category_ids"}),
-        merchant_id=merchant_id
-    )
+    data = item.model_dump(exclude={"category_ids"})
+    # Enum als String für DB; JSON-Felder bleiben Liste
+    if data.get("preorder_lead_time_unit") is not None:
+        data["preorder_lead_time_unit"] = getattr(data["preorder_lead_time_unit"], "value", data["preorder_lead_time_unit"])
+    if data.get("allowed_delivery_methods") is None:
+        data["allowed_delivery_methods"] = ["pickup", "shipping"]
+    db_item = models.Item(**data, merchant_id=merchant_id)
     db.add(db_item)
     db.flush()
     
@@ -1222,6 +1535,111 @@ def create_item(item: ItemCreate, merchant_id: int = Query(...), db: Session = D
     db.commit()
     db.refresh(db_item)
     return db_item
+
+
+@app.get("/seller/items", response_model=List[ItemResponseForSeller])
+def get_seller_items(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Artikel des eingeloggten Sellers inkl. supplier_delivery_time."""
+    ensure_runtime_schema(db)
+    token_payload = decode_bearer_token(authorization)
+    if not token_payload:
+        raise HTTPException(status_code=401, detail="Nicht authentifiziert")
+    user_id = int(token_payload.get("user_id", -1))
+    if str(token_payload.get("role", "")).upper() != "MERCHANT":
+        raise HTTPException(status_code=403, detail="Nur Händler")
+    merchant = db.execute(select(models.Merchant).where(models.Merchant.user_id == user_id)).scalar_one_or_none()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Merchant nicht gefunden")
+    stmt = select(models.Item).where(models.Item.merchant_id == merchant.id).order_by(models.Item.display_order.asc(), models.Item.id.asc())
+    items = db.execute(stmt).scalars().all()
+    result = []
+    for it in items:
+        data = ItemResponseForSeller.model_validate(it).model_dump()
+        data["category_ids"] = [c.id for c in it.categories]
+        result.append(ItemResponseForSeller(**data))
+    return result
+
+
+@app.get("/seller/items/{item_id}", response_model=ItemResponseForSeller)
+def get_seller_item(
+    item_id: int = Path(...),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Einzelnen Artikel für Seller (inkl. supplier_delivery_time)."""
+    ensure_runtime_schema(db)
+    token_payload = decode_bearer_token(authorization)
+    if not token_payload:
+        raise HTTPException(status_code=401, detail="Nicht authentifiziert")
+    user_id = int(token_payload.get("user_id", -1))
+    if str(token_payload.get("role", "")).upper() != "MERCHANT":
+        raise HTTPException(status_code=403, detail="Nur Händler")
+    merchant = db.execute(select(models.Merchant).where(models.Merchant.user_id == user_id)).scalar_one_or_none()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Merchant nicht gefunden")
+    item = db.execute(select(models.Item).where(
+        models.Item.id == item_id,
+        models.Item.merchant_id == merchant.id
+    )).scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Artikel nicht gefunden")
+    data = ItemResponseForSeller.model_validate(item).model_dump()
+    data["category_ids"] = [c.id for c in item.categories]
+    return ItemResponseForSeller(**data)
+
+
+@app.patch("/seller/items/{item_id}", response_model=ItemResponseForSeller)
+def update_seller_item(
+    item_id: int = Path(...),
+    payload: Optional[ItemUpdate] = Body(None),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Artikel aktualisieren (Seller)."""
+    ensure_runtime_schema(db)
+    token_payload = decode_bearer_token(authorization)
+    if not token_payload:
+        raise HTTPException(status_code=401, detail="Nicht authentifiziert")
+    user_id = int(token_payload.get("user_id", -1))
+    if str(token_payload.get("role", "")).upper() != "MERCHANT":
+        raise HTTPException(status_code=403, detail="Nur Händler")
+    merchant = db.execute(select(models.Merchant).where(models.Merchant.user_id == user_id)).scalar_one_or_none()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Merchant nicht gefunden")
+    item = db.execute(select(models.Item).where(
+        models.Item.id == item_id,
+        models.Item.merchant_id == merchant.id
+    )).scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Artikel nicht gefunden")
+    if not payload:
+        db.refresh(item)
+        data = ItemResponseForSeller.model_validate(item).model_dump()
+        data["category_ids"] = [c.id for c in item.categories]
+        return ItemResponseForSeller(**data)
+    updates = payload.model_dump(exclude_unset=True)
+    category_ids = updates.pop("category_ids", None)
+    if "preorder_lead_time_unit" in updates and updates["preorder_lead_time_unit"] is not None:
+        u = updates["preorder_lead_time_unit"]
+        updates["preorder_lead_time_unit"] = getattr(u, "value", u)
+    for key, value in updates.items():
+        if hasattr(item, key):
+            setattr(item, key, value)
+    if category_ids is not None:
+        item.categories.clear()
+        for cid in category_ids:
+            cat = db.execute(select(models.Category).where(models.Category.id == cid)).scalar_one_or_none()
+            if cat:
+                item.categories.append(cat)
+    db.commit()
+    db.refresh(item)
+    data = ItemResponseForSeller.model_validate(item).model_dump()
+    data["category_ids"] = [c.id for c in item.categories]
+    return ItemResponseForSeller(**data)
+
 
 # Orders endpoints
 @app.get("/orders", response_model=List[OrderResponse])
@@ -1256,6 +1674,67 @@ def get_order(order_id: int = Path(...), db: Session = Depends(get_db)):
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     return order
+
+
+@app.get("/seller/orders", response_model=List[SellerOrderResponse])
+def get_seller_orders(
+    authorization: Optional[str] = Header(default=None),
+    skip: int = 0,
+    limit: int = 100,
+    status: Optional[OrderStatusEnum] = None,
+    db: Session = Depends(get_db),
+):
+    """Bestellübersicht für Seller – Artikel mit supplier_delivery_time."""
+    ensure_runtime_schema(db)
+    token_payload = decode_bearer_token(authorization)
+    if not token_payload:
+        raise HTTPException(status_code=401, detail="Nicht authentifiziert")
+    user_id = int(token_payload.get("user_id", -1))
+    if str(token_payload.get("role", "")).upper() not in ("MERCHANT", "ADMIN"):
+        raise HTTPException(status_code=403, detail="Nur Händler oder Admin")
+    merchant = db.execute(select(models.Merchant).where(models.Merchant.user_id == user_id)).scalar_one_or_none()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Merchant nicht gefunden")
+    stmt = select(models.Order).where(models.Order.merchant_id == merchant.id)
+    if status:
+        stmt = stmt.where(models.Order.status == status)
+    stmt = stmt.order_by(models.Order.order_date.desc()).offset(skip).limit(limit)
+    orders = db.execute(stmt).scalars().all()
+    result = []
+    for order in orders:
+        items_out = []
+        for oi in order.items:
+            item = db.execute(select(models.Item).where(models.Item.id == oi.item_id)).scalar_one_or_none()
+            item_name = item.name if item else ""
+            supplier_delivery_time = getattr(item, "supplier_delivery_time", None) if item else None
+            items_out.append(SellerOrderItemResponse(
+                id=oi.id,
+                order_id=oi.order_id,
+                item_id=oi.item_id,
+                quantity=oi.quantity,
+                price_per_unit=oi.price_per_unit,
+                price_type=getattr(oi, "price_type", "standard") or "standard",
+                item_name=item_name,
+                supplier_delivery_time=supplier_delivery_time,
+            ))
+        result.append(SellerOrderResponse(
+            id=order.id,
+            merchant_id=order.merchant_id,
+            customer_id=order.customer_id,
+            order_date=order.order_date,
+            status=OrderStatusEnum(order.status.value) if hasattr(order.status, "value") else order.status,
+            payment_method=PaymentMethodEnum(order.payment_method.value) if hasattr(order.payment_method, "value") else order.payment_method,
+            total_amount=order.total_amount,
+            merchant_amount=getattr(order, "merchant_amount", None),
+            platform_commission=getattr(order, "platform_commission", None),
+            pickup_pin=getattr(order, "pickup_pin", None),
+            pickup_qr=getattr(order, "pickup_qr", None),
+            pickup_barcode=getattr(order, "pickup_barcode", None),
+            dhl_tracking_number=getattr(order, "dhl_tracking_number", None),
+            items=items_out,
+        ))
+    return result
+
 
 @app.post("/orders", response_model=OrderResponse)
 def create_order(order: OrderCreate, merchant_id: int = Query(...), db: Session = Depends(get_db)):
@@ -1410,6 +1889,7 @@ def get_my_merchant_profile(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db)
 ):
+    ensure_runtime_schema(db)
     token_payload = decode_bearer_token(authorization)
     user_id = int(token_payload.get("user_id", -1))
     user = db.execute(select(models.User).where(models.User.id == user_id)).scalar_one_or_none()
@@ -1422,7 +1902,7 @@ def get_my_merchant_profile(
         "id": merchant.id,
         "user_id": merchant.user_id,
         "shop_name": merchant.name,
-        "description": None,
+        "description": getattr(merchant, "description", None),
         "address": merchant.address,
         "phone": merchant.phone,
         "opening_hours": merchant.opening_hours,
@@ -1431,6 +1911,11 @@ def get_my_merchant_profile(
         "subdomain": merchant.subdomain,
         "package": merchant.package.value if merchant.package else None,
         "domain_type": merchant.domain_type.value if merchant.domain_type else None,
+        "imprint": getattr(merchant, "imprint", None),
+        "instagram_url": getattr(merchant, "instagram_url", None),
+        "tiktok_url": getattr(merchant, "tiktok_url", None),
+        "website_url": getattr(merchant, "website_url", None),
+        "shop_image_url": getattr(merchant, "shop_image_url", None),
     }
 
 @app.post("/merchant/profile", response_model=MerchantProfileResponse)
@@ -1439,6 +1924,7 @@ def create_my_merchant_profile(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db)
 ):
+    ensure_runtime_schema(db)
     token_payload = decode_bearer_token(authorization)
     user_id = int(token_payload.get("user_id", -1))
     role = str(token_payload.get("role", "")).upper()
@@ -1470,6 +1956,12 @@ def create_my_merchant_profile(
         phone=(payload.phone or "").strip() or None,
         opening_hours=(payload.opening_hours or "").strip() or None,
         support_email=(payload.support_email or "").strip() or None,
+        description=(payload.description or "").strip() or None,
+        imprint=(payload.imprint or "").strip() or None,
+        instagram_url=(payload.instagram_url or "").strip() or None,
+        tiktok_url=(payload.tiktok_url or "").strip() or None,
+        website_url=(payload.website_url or "").strip() or None,
+        shop_image_url=(payload.shop_image_url or "").strip() or None,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
     )
@@ -1481,7 +1973,7 @@ def create_my_merchant_profile(
         "id": merchant.id,
         "user_id": merchant.user_id,
         "shop_name": merchant.name,
-        "description": payload.description,
+        "description": getattr(merchant, "description", None),
         "address": merchant.address,
         "phone": merchant.phone,
         "opening_hours": merchant.opening_hours,
@@ -1490,6 +1982,11 @@ def create_my_merchant_profile(
         "subdomain": merchant.subdomain,
         "package": merchant.package.value if merchant.package else None,
         "domain_type": merchant.domain_type.value if merchant.domain_type else None,
+        "imprint": getattr(merchant, "imprint", None),
+        "instagram_url": getattr(merchant, "instagram_url", None),
+        "tiktok_url": getattr(merchant, "tiktok_url", None),
+        "website_url": getattr(merchant, "website_url", None),
+        "shop_image_url": getattr(merchant, "shop_image_url", None),
     }
 
 @app.put("/merchant/profile", response_model=MerchantProfileResponse)
@@ -1498,6 +1995,7 @@ def update_my_merchant_profile(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db)
 ):
+    ensure_runtime_schema(db)
     token_payload = decode_bearer_token(authorization)
     user_id = int(token_payload.get("user_id", -1))
     merchant = db.execute(select(models.Merchant).where(models.Merchant.user_id == user_id)).scalar_one_or_none()
@@ -1511,7 +2009,7 @@ def update_my_merchant_profile(
         merchant.name = shop_name
 
     if payload.description is not None:
-        merchant.description = payload.description.strip() if hasattr(merchant, "description") else None
+        setattr(merchant, "description", payload.description.strip() or None)
     if payload.address is not None:
         merchant.address = payload.address.strip() or None
     if payload.phone is not None:
@@ -1520,6 +2018,16 @@ def update_my_merchant_profile(
         merchant.opening_hours = payload.opening_hours.strip() or None
     if payload.support_email is not None:
         merchant.support_email = payload.support_email.strip() or None
+    if payload.imprint is not None:
+        setattr(merchant, "imprint", payload.imprint.strip() or None)
+    if payload.instagram_url is not None:
+        setattr(merchant, "instagram_url", payload.instagram_url.strip() or None)
+    if payload.tiktok_url is not None:
+        setattr(merchant, "tiktok_url", payload.tiktok_url.strip() or None)
+    if payload.website_url is not None:
+        setattr(merchant, "website_url", payload.website_url.strip() or None)
+    if payload.shop_image_url is not None:
+        setattr(merchant, "shop_image_url", payload.shop_image_url.strip() or None)
 
     merchant.updated_at = datetime.utcnow()
     db.add(merchant)
@@ -1530,7 +2038,7 @@ def update_my_merchant_profile(
         "id": merchant.id,
         "user_id": merchant.user_id,
         "shop_name": merchant.name,
-        "description": payload.description,
+        "description": getattr(merchant, "description", None),
         "address": merchant.address,
         "phone": merchant.phone,
         "opening_hours": merchant.opening_hours,
@@ -1539,6 +2047,11 @@ def update_my_merchant_profile(
         "subdomain": merchant.subdomain,
         "package": merchant.package.value if merchant.package else None,
         "domain_type": merchant.domain_type.value if merchant.domain_type else None,
+        "imprint": getattr(merchant, "imprint", None),
+        "instagram_url": getattr(merchant, "instagram_url", None),
+        "tiktok_url": getattr(merchant, "tiktok_url", None),
+        "website_url": getattr(merchant, "website_url", None),
+        "shop_image_url": getattr(merchant, "shop_image_url", None),
     }
 
 @app.get("/categories")
@@ -1559,7 +2072,13 @@ def get_categories(
         except Exception:
             seller_user_id = None
 
-    categories = db.execute(select(models.Category).order_by(models.Category.id.asc())).scalars().all()
+    order_col = getattr(models.Category, "display_order", None)
+    stmt = select(models.Category)
+    if order_col is not None:
+        stmt = stmt.order_by(order_col.asc(), models.Category.id.asc())
+    else:
+        stmt = stmt.order_by(models.Category.id.asc())
+    categories = db.execute(stmt).scalars().all()
     response = []
     for c in categories:
         c_seller_id = getattr(c, "seller_id", None)
@@ -1568,10 +2087,71 @@ def get_categories(
                 "id": c.id,
                 "name": c.name,
                 "description": c.description,
+                "display_order": getattr(c, "display_order", 0),
                 "seller_id": c_seller_id,
                 "age_restriction": int(getattr(c, "age_restriction", 0) or 0)
             })
     return response
+
+
+class ReorderCategoriesRequest(BaseModel):
+    category_ids: List[int]
+
+
+class ReorderItemsRequest(BaseModel):
+    item_ids: List[int]
+
+
+@app.patch("/seller/categories/reorder")
+def seller_reorder_categories(
+    payload: ReorderCategoriesRequest,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Reihenfolge der Kategorien (Seller) setzen."""
+    ensure_runtime_schema(db)
+    token_payload = decode_bearer_token(authorization)
+    user_id = int(token_payload.get("user_id", -1))
+    if str(token_payload.get("role", "")).upper() != "MERCHANT":
+        raise HTTPException(status_code=403, detail="Nur Händler")
+    merchant = db.execute(select(models.Merchant).where(models.Merchant.user_id == user_id)).scalar_one_or_none()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Merchant nicht gefunden")
+    for idx, cat_id in enumerate(payload.category_ids or []):
+        cat = db.execute(select(models.Category).where(
+            models.Category.id == cat_id,
+            models.Category.merchant_id == merchant.id
+        )).scalar_one_or_none()
+        if cat:
+            cat.display_order = idx
+    db.commit()
+    return {"message": "Reihenfolge gespeichert"}
+
+
+@app.patch("/seller/items/reorder")
+def seller_reorder_items(
+    payload: ReorderItemsRequest,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Reihenfolge der Artikel (Seller) setzen."""
+    ensure_runtime_schema(db)
+    token_payload = decode_bearer_token(authorization)
+    user_id = int(token_payload.get("user_id", -1))
+    if str(token_payload.get("role", "")).upper() != "MERCHANT":
+        raise HTTPException(status_code=403, detail="Nur Händler")
+    merchant = db.execute(select(models.Merchant).where(models.Merchant.user_id == user_id)).scalar_one_or_none()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Merchant nicht gefunden")
+    for idx, item_id in enumerate(payload.item_ids or []):
+        item = db.execute(select(models.Item).where(
+            models.Item.id == item_id,
+            models.Item.merchant_id == merchant.id
+        )).scalar_one_or_none()
+        if item:
+            item.display_order = idx
+    db.commit()
+    return {"message": "Reihenfolge gespeichert"}
 
 
 @app.post("/categories")
@@ -1721,8 +2301,13 @@ def get_ticket_detail(
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
 
-    if role not in ["ADMIN", "MODERATOR"] and int(ticket.user_id) != user_id:
-        raise HTTPException(status_code=403, detail="Not allowed to view this ticket")
+    if role not in ["ADMIN", "MODERATOR"]:
+        if int(ticket.user_id) != user_id:
+            raise HTTPException(status_code=403, detail="Not allowed to view this ticket")
+    else:
+        # Admin/Mod: nur Pool-Tickets oder selbst zugewiesene sehen
+        if ticket.assigned_to_user_id is not None and int(ticket.assigned_to_user_id) != user_id:
+            raise HTTPException(status_code=403, detail="Not allowed to view this ticket")
 
     messages = db.execute(
         select(models.TicketMessage)
@@ -1766,7 +2351,16 @@ def get_tickets(
     stmt = select(models.Ticket).order_by(models.Ticket.id.desc())
     if role not in ["ADMIN", "MODERATOR"]:
         stmt = stmt.where(models.Ticket.user_id == user_id)
-    rows = db.execute(stmt).scalars().all()
+    else:
+        # Admin/Mod: nur Pool (assigned_to_id IS NULL) oder selbst zugewiesen
+        stmt = stmt.where(
+            or_(
+                models.Ticket.assigned_to_user_id.is_(None),
+                models.Ticket.assigned_to_user_id == user_id,
+            )
+        )
+    result = db.execute(stmt)
+    rows = result.scalars().all() if hasattr(result, "scalars") else result.all()
     return [
         {
             "id": t.id,
@@ -1777,58 +2371,75 @@ def get_tickets(
             "status": t.status.value if hasattr(t.status, "value") else str(t.status),
             "created_at": t.created_at,
         }
-        for t in rows
+        for t in (rows or [])
     ]
 
 @app.post("/tickets")
 def create_ticket(
     payload: TicketCreateRequest,
     authorization: Optional[str] = Header(default=None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     ensure_runtime_schema(db)
     token_payload = decode_bearer_token(authorization)
-    user_id = int(token_payload.get("user_id", -1))
+    user_id = int(token_payload.get("user_id") or 0)
+    if user_id <= 0:
+        raise HTTPException(status_code=401, detail="Ungültiger Token oder Benutzer nicht gefunden")
 
-    assigned_to_user_id = payload.assigned_to_user_id
-    if assigned_to_user_id is None:
-        admin_user = db.execute(
-            select(models.User).where(models.User.role == models.UserRole.ADMIN).order_by(models.User.id.asc())
-        ).scalar_one_or_none()
-        assigned_to_user_id = admin_user.id if admin_user else None
+    role = str((token_payload.get("role") or "")).upper()
+    is_admin_or_mod = role in ("ADMIN", "MODERATOR")
+    for_user_id = getattr(payload, "for_user_id", None)
 
-    ticket = models.Ticket(
-        user_id=user_id,
+    if is_admin_or_mod and for_user_id is not None:
+        target = db.execute(select(models.User).where(models.User.id == int(for_user_id))).scalar_one_or_none()
+        if not target:
+            raise HTTPException(status_code=400, detail="Ziel-User nicht gefunden")
+        ticket_owner_id = int(for_user_id)
+        assigned_to_user_id = user_id
+    else:
+        ticket_owner_id = user_id
+        assigned_to_user_id = None  # Pool: Kunde/Seller erstellt, kein Zuweisung
+
+    subject = (getattr(payload, "subject", None) or "").strip()
+    if not subject:
+        raise HTTPException(status_code=400, detail="Betreff ist erforderlich")
+    message_text = (getattr(payload, "message", None) or "").strip()
+    if not message_text:
+        raise HTTPException(status_code=400, detail="Nachricht ist erforderlich")
+    category = (getattr(payload, "category", None) or "GENERAL").strip()
+
+    new_ticket = models.Ticket(
+        user_id=ticket_owner_id,
         assigned_to_user_id=assigned_to_user_id,
-        subject=(payload.subject or "").strip(),
-        category=(payload.category or "GENERAL").strip(),
+        subject=subject,
+        category=category,
         status=models.TicketStatus.OPEN,
-        created_at=datetime.utcnow()
+        created_at=datetime.utcnow(),
     )
-    db.add(ticket)
+    db.add(new_ticket)
     db.flush()
 
     first_message = models.TicketMessage(
-        ticket_id=ticket.id,
+        ticket_id=new_ticket.id,
         sender_user_id=user_id,
-        message=(payload.message or "").strip(),
-        created_at=datetime.utcnow()
+        message=message_text,
+        created_at=datetime.utcnow(),
     )
     db.add(first_message)
 
-    recipient_id = assigned_to_user_id
-    if recipient_id and recipient_id != user_id:
+    if ticket_owner_id != user_id:
         notify_user(
             db=db,
-            user_id=recipient_id,
+            user_id=ticket_owner_id,
             n_type="ticket",
-            title=f"Neues Ticket #{ticket.id}",
-            message=f"Neue Nachricht in deinem Ticket #{ticket.id} erhalten",
-            link=f"/tickets/{ticket.id}"
+            title=f"Neues Ticket #{new_ticket.id}",
+            message=f"Ein Support-Mitarbeiter hat ein Ticket für dich erstellt: #{new_ticket.id}",
+            link=f"/tickets/{new_ticket.id}",
         )
 
     db.commit()
-    return {"id": ticket.id, "status": "OPEN", "assigned_to_user_id": assigned_to_user_id}
+    db.refresh(new_ticket)
+    return {"id": new_ticket.id, "status": "OPEN", "assigned_to_user_id": assigned_to_user_id}
 
 @app.post("/tickets/{ticket_id}/messages")
 def add_ticket_message(
@@ -1850,6 +2461,10 @@ def add_ticket_message(
     if status_raw == "CLOSED" and sender_role not in ["ADMIN", "MODERATOR"]:
         raise HTTPException(status_code=403, detail="Geschlossene Tickets können nur von Admin/Moderator beantwortet werden")
 
+    # Claiming: Admin/Mod übernimmt Pool-Ticket bei erster Antwort
+    if sender_role in ["ADMIN", "MODERATOR"] and ticket.assigned_to_user_id is None:
+        ticket.assigned_to_user_id = sender_user_id
+
     msg = models.TicketMessage(
         ticket_id=ticket.id,
         sender_user_id=sender_user_id,
@@ -1858,7 +2473,11 @@ def add_ticket_message(
     )
     db.add(msg)
 
-    ticket.status = models.TicketStatus.WAITING_FOR_REPLY
+    # Status: Kunde/Seller → OPEN, Admin/Mod → WAITING_FOR_REPLY
+    if sender_role in ("ADMIN", "MODERATOR"):
+        ticket.status = models.TicketStatus.WAITING_FOR_REPLY
+    else:
+        ticket.status = models.TicketStatus.OPEN
 
     recipient_id = ticket.assigned_to_user_id if sender_user_id == ticket.user_id else ticket.user_id
     if recipient_id and recipient_id != sender_user_id:
@@ -2022,6 +2641,131 @@ def update_order_tracking(
     db.refresh(order)
     return order
 
+# Seller: Liste der Kunden, die bei diesem Seller bereits gekauft haben (mit Suche)
+@app.get("/merchant/customers", response_model=List[SellerCustomerResponse])
+def get_merchant_customers(
+    search: Optional[str] = Query(None),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Nur Kunden anzeigen, die bei diesem Seller bereits gekauft haben. Suche nach E-Mail, Benutzername oder echtem Namen."""
+    token_payload = decode_bearer_token(authorization)
+    user_id = int(token_payload.get("user_id", -1))
+    role = str(token_payload.get("role", "")).upper()
+    if role not in ("MERCHANT", "ADMIN", "MODERATOR"):
+        raise HTTPException(status_code=403, detail="Nur Händler")
+
+    merchant = db.execute(
+        select(models.Merchant).where(models.Merchant.user_id == user_id)
+    ).scalar_one_or_none()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Merchant nicht gefunden")
+
+    # Kunden-IDs, die mindestens eine Bestellung bei diesem Merchant haben
+    customer_ids_subq = (
+        select(models.Order.customer_id)
+        .where(models.Order.merchant_id == merchant.id)
+        .distinct()
+    )
+    stmt = (
+        select(models.Customer)
+        .where(
+            models.Customer.merchant_id == merchant.id,
+            models.Customer.id.in_(customer_ids_subq),
+        )
+    )
+    customers = db.execute(stmt).scalars().all()
+    if not customers:
+        return []
+
+    out = []
+    search_lower = (search or "").strip().lower() if search else None
+    for c in customers:
+        user = None
+        if c.user_id:
+            user = db.execute(select(models.User).where(models.User.id == c.user_id)).scalar_one_or_none()
+        if search_lower:
+            searchable = " ".join(
+                filter(
+                    None,
+                    [
+                        (user.username or "").lower(),
+                        (user.email or "").lower() if user else None,
+                        (getattr(user, "first_name") or "").lower() if user else None,
+                        (getattr(user, "last_name") or "").lower() if user else None,
+                        (c.name or "").lower(),
+                        (c.email or "").lower(),
+                    ],
+                )
+            )
+            if search_lower not in searchable:
+                continue
+        methods = c.allowed_payment_methods if getattr(c, "allowed_payment_methods", None) is not None else ["CASH", "PAYPAL", "INVOICE"]
+        if isinstance(methods, str):
+            try:
+                methods = json.loads(methods) if methods else ["CASH", "PAYPAL", "INVOICE"]
+            except Exception:
+                methods = ["CASH", "PAYPAL", "INVOICE"]
+        out.append({
+            "id": c.id,
+            "merchant_id": c.merchant_id,
+            "user_id": c.user_id,
+            "name": c.name or "",
+            "email": c.email,
+            "phone": c.phone,
+            "username": user.username if user else None,
+            "first_name": getattr(user, "first_name", None) if user else None,
+            "last_name": getattr(user, "last_name", None) if user else None,
+            "credit_limit_euro": float(c.credit_limit_euro or 0),
+            "current_credit_used": float(c.current_credit_used or 0),
+            "allowed_payment_methods": methods,
+        })
+    return out
+
+
+@app.patch("/merchant/customers/{customer_id}")
+def update_merchant_customer(
+    customer_id: int = Path(...),
+    payload: SellerCustomerUpdate = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Zahlungsmethoden und/oder Rechnungslimit für einen Kunden (Seller) setzen."""
+    token_payload = decode_bearer_token(authorization)
+    user_id = int(token_payload.get("user_id", -1))
+    role = str(token_payload.get("role", "")).upper()
+    if role not in ("MERCHANT", "ADMIN", "MODERATOR"):
+        raise HTTPException(status_code=403, detail="Nur Händler")
+
+    merchant = db.execute(
+        select(models.Merchant).where(models.Merchant.user_id == user_id)
+    ).scalar_one_or_none()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Merchant nicht gefunden")
+
+    customer = db.execute(
+        select(models.Customer).where(
+            models.Customer.id == customer_id,
+            models.Customer.merchant_id == merchant.id,
+        )
+    ).scalar_one_or_none()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Kunde nicht gefunden")
+
+    if payload.allowed_payment_methods is not None:
+        customer.allowed_payment_methods = payload.allowed_payment_methods
+    if payload.credit_limit_euro is not None:
+        customer.credit_limit_euro = float(payload.credit_limit_euro)
+    db.commit()
+    db.refresh(customer)
+    methods = customer.allowed_payment_methods or ["CASH", "PAYPAL", "INVOICE"]
+    return {
+        "id": customer.id,
+        "credit_limit_euro": float(customer.credit_limit_euro or 0),
+        "allowed_payment_methods": methods,
+    }
+
+
 # Customer credit limit endpoint
 @app.patch("/merchant/customer_limit/{customer_id}", response_model=CustomerResponse)
 def update_customer_credit_limit(
@@ -2097,6 +2841,10 @@ def update_ticket_status(
     if status_raw not in allowed:
         raise HTTPException(status_code=400, detail="Ungültiger Status")
 
+    # Claiming: Admin/Mod übernimmt Pool-Ticket bei Statusänderung
+    if ticket.assigned_to_user_id is None:
+        ticket.assigned_to_user_id = int(token_payload.get("user_id", -1))
+
     ticket.status = allowed[status_raw]
 
     status_text = "aktualisiert"
@@ -2126,6 +2874,76 @@ def update_ticket_status(
         "id": ticket.id,
         "status": ticket.status.value if hasattr(ticket.status, "value") else str(ticket.status)
     }
+
+
+@app.post("/admin/tickets/{ticket_id}/apply")
+def admin_apply_ticket_changes(
+    ticket_id: int = Path(...),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Admin: Änderung aus Ticket übernehmen (Shop-Name, Profil Vorname/Nachname/Geburtstag) und Ticket schließen."""
+    ensure_runtime_schema(db)
+    token_payload = decode_bearer_token(authorization)
+    if str(token_payload.get("role", "")).upper() != "ADMIN":
+        raise HTTPException(status_code=403, detail="Nur Admin")
+
+    ticket = db.execute(select(models.Ticket).where(models.Ticket.id == ticket_id)).scalar_one_or_none()
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket nicht gefunden")
+
+    msgs_result = db.execute(
+        select(models.TicketMessage).where(models.TicketMessage.ticket_id == ticket.id).order_by(models.TicketMessage.id.asc())
+    )
+    msgs = msgs_result.scalars().all()
+    first_msg = msgs[0] if msgs else None
+    if not first_msg:
+        raise HTTPException(status_code=400, detail="Keine Nachricht im Ticket zum Übernehmen")
+
+    category = (ticket.category or "").strip().upper()
+    applied = []
+
+    if category == "SHOP_NAME_CHANGE":
+        new_name = (first_msg.message or "").strip()
+        if not new_name:
+            raise HTTPException(status_code=400, detail="Kein neuer Shop-Name in der Nachricht")
+        merchant = db.execute(select(models.Merchant).where(models.Merchant.user_id == ticket.user_id)).scalar_one_or_none()
+        if not merchant:
+            raise HTTPException(status_code=404, detail="Kein Shop für diesen Nutzer gefunden")
+        merchant.name = new_name
+        applied.append("shop_name")
+    elif category in ("PROFILE_CHANGE", "ÄNDERUNGSWUNSCH", "CHANGE_REQUEST"):
+        try:
+            data = json.loads(first_msg.message or "{}")
+        except Exception:
+            data = {}
+        target_user = db.execute(select(models.User).where(models.User.id == ticket.user_id)).scalar_one_or_none()
+        if not target_user:
+            raise HTTPException(status_code=404, detail="Nutzer nicht gefunden")
+        if data.get("first_name") is not None:
+            target_user.first_name = str(data["first_name"]).strip() or None
+            applied.append("first_name")
+        if data.get("last_name") is not None:
+            target_user.last_name = str(data["last_name"]).strip() or None
+            applied.append("last_name")
+        if data.get("birthday") is not None:
+            try:
+                from datetime import date as date_type
+                if isinstance(data["birthday"], str):
+                    target_user.birthday = date_type.fromisoformat(data["birthday"].split("T")[0])
+                else:
+                    target_user.birthday = data["birthday"]
+                applied.append("birthday")
+            except Exception:
+                pass
+    else:
+        raise HTTPException(status_code=400, detail="Ticket-Typ unterstützt keine Übernahme (nur SHOP_NAME_CHANGE oder Änderungswunsch)")
+
+    ticket.status = models.TicketStatus.CLOSED
+    db.commit()
+    db.refresh(ticket)
+    return {"message": "Änderung übernommen", "ticket_id": ticket.id, "applied": applied, "status": "CLOSED"}
+
 
 @app.get("/merchants")
 def get_merchants(db: Session = Depends(get_db)):
@@ -2164,7 +2982,7 @@ def get_notifications(authorization: Optional[str] = Header(default=None), db: S
     rows = db.execute(
         text(
             """
-            SELECT id, user_id, message, link, is_read, created_at
+            SELECT id, user_id, type, title, message, link, is_read, created_at
             FROM notifications
             WHERE user_id = :uid
             ORDER BY id DESC
@@ -2230,12 +3048,60 @@ def mark_notification_read(
     return {"message": "Notification marked as read"}
 
 
+@app.post("/admin/users", response_model=UserResponse)
+def admin_create_user(
+    payload: AdminUserCreate,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Admin legt User mit username, E-Mail und temporärem Passwort an. must_change_password=True, profile_complete=False."""
+    token_payload = decode_bearer_token(authorization)
+    if str(token_payload.get("role", "")).upper() != "ADMIN":
+        raise HTTPException(status_code=403, detail="Nur Admin")
+
+    existing = db.execute(
+        select(models.User).where(
+            or_(models.User.username == payload.username, models.User.email == payload.email)
+        )
+    ).scalar_one_or_none()
+    if existing:
+        if existing.username == payload.username:
+            raise HTTPException(status_code=400, detail="Username bereits vergeben")
+        raise HTTPException(status_code=400, detail="E-Mail bereits vergeben")
+
+    role_mapping = {1: models.UserRole.ADMIN, 2: models.UserRole.MODERATOR, 3: models.UserRole.MERCHANT, 4: models.UserRole.CUSTOMER}
+    resolved_role = models.UserRole.CUSTOMER
+    if payload.role_id is not None:
+        resolved_role = role_mapping.get(payload.role_id, models.UserRole.CUSTOMER)
+    elif payload.role is not None:
+        resolved_role = models.UserRole[payload.role.name]
+
+    pw = (payload.temporary_password or "").strip()
+    if len(pw) < 6:
+        raise HTTPException(status_code=400, detail="Temporäres Passwort muss mindestens 6 Zeichen haben")
+
+    db_user = models.User(
+        username=payload.username.strip(),
+        email=payload.email,
+        password_hash=get_password_hash(pw),
+        role=resolved_role,
+        allowed_payment_methods=["CASH", "PAYPAL", "INVOICE"],
+        must_change_password=True,
+        profile_complete=False,
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return user_to_response(db_user, db)
+
+
 @app.patch("/admin/users/{user_id}/reset-2fa")
 def admin_reset_user_2fa(
     user_id: int = Path(...),
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db)
 ):
+    """Admin setzt 2FA-Status zurück (totp_secret/two_factor_enabled). Passwort bleibt unverändert."""
     token_payload = decode_bearer_token(authorization)
     role = str(token_payload.get("role", "")).upper()
     if role != "ADMIN":
@@ -2247,6 +3113,15 @@ def admin_reset_user_2fa(
 
     db_user.two_factor_secret = None
     db_user.backup_codes = []
+    ensure_runtime_schema(db)
+    notify_user(
+        db=db,
+        user_id=db_user.id,
+        n_type="security",
+        title="Sicherheitshinweis",
+        message="Deine Zwei-Faktor-Authentifizierung wurde von einem Administrator zurückgesetzt. Bitte aktiviere sie zu deinem Schutz in den Einstellungen erneut.",
+        link="/account"
+    )
     db.commit()
     db.refresh(db_user)
     return {"message": "2FA reset successful", "user_id": db_user.id, "has_2fa": False}

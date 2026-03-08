@@ -93,7 +93,10 @@ export const AuthProvider = ({ children }) => {
           role: String(current.role || '').toUpperCase(),
           has2FA: current.has_2fa,
           profileImage: current.profile_picture_url,
-          is_active: current.is_active !== false
+          is_active: current.is_active !== false,
+          is_banned: Boolean(current.is_banned),
+          must_change_password: Boolean(current.must_change_password),
+          profile_complete: Boolean(current.profile_complete !== false)
         });
       } catch {
         logout();
@@ -160,7 +163,10 @@ export const AuthProvider = ({ children }) => {
             role: apiRole,
             has2FA: backendUser.has_2fa,
             profileImage: backendUser.profile_picture_url,
-            is_active: backendUser.is_active !== false
+            is_active: backendUser.is_active !== false,
+            is_banned: Boolean(backendUser.is_banned),
+            must_change_password: Boolean(backendUser.must_change_password),
+            profile_complete: Boolean(backendUser.profile_complete !== false)
           }
         : {
             id: data.user_id,
@@ -168,7 +174,10 @@ export const AuthProvider = ({ children }) => {
             role: apiRole,
             has2FA: Boolean(data.has2FA),
             profileImage: null,
-            is_active: true
+            is_active: true,
+            is_banned: false,
+            must_change_password: Boolean(data.must_change_password),
+            profile_complete: Boolean(data.profile_complete !== false)
           };
 
       if (has2FA) {
@@ -231,7 +240,21 @@ export const AuthProvider = ({ children }) => {
         return false;
       }
 
-      completeLogin(tempUser, data.access_token);
+      const meRes = await fetch(`${API_URL}/users/me`, {
+        headers: { Authorization: `Bearer ${data.access_token}` }
+      });
+      const meData = meRes.ok ? await meRes.json() : null;
+      const userToSet = meData ? {
+        id: meData.id,
+        username: meData.username,
+        role: String(meData.role || '').toUpperCase(),
+        has2FA: Boolean(meData.has_2fa),
+        profileImage: meData.profile_picture_url,
+        is_active: meData.is_active !== false,
+        must_change_password: Boolean(meData.must_change_password),
+        profile_complete: Boolean(meData.profile_complete !== false)
+      } : { ...tempUser, must_change_password: false, profile_complete: true };
+      completeLogin(userToSet, data.access_token);
       return true;
     } catch {
       setError('2FA-Verifizierung fehlgeschlagen');
@@ -287,7 +310,21 @@ export const AuthProvider = ({ children }) => {
         return false;
       }
 
-      completeLogin(tempUser, data.access_token);
+      const meRes = await fetch(`${API_URL}/users/me`, {
+        headers: { Authorization: `Bearer ${data.access_token}` }
+      });
+      const meData = meRes.ok ? await meRes.json() : null;
+      const userToSet = meData ? {
+        id: meData.id,
+        username: meData.username,
+        role: String(meData.role || '').toUpperCase(),
+        has2FA: Boolean(meData.has_2fa),
+        profileImage: meData.profile_picture_url,
+        is_active: meData.is_active !== false,
+        must_change_password: Boolean(meData.must_change_password),
+        profile_complete: Boolean(meData.profile_complete !== false)
+      } : { ...tempUser, must_change_password: false, profile_complete: true };
+      completeLogin(userToSet, data.access_token);
       return true;
     } catch {
       setError('Backup-Code-Verifizierung fehlgeschlagen');
@@ -304,7 +341,10 @@ export const AuthProvider = ({ children }) => {
       role: userData.role,
       has2FA: userData.has2FA,
       profileImage: userData.profileImage,
-      is_active: userData.is_active !== false
+      is_active: userData.is_active !== false,
+      is_banned: Boolean(userData.is_banned),
+      must_change_password: Boolean(userData.must_change_password),
+      profile_complete: Boolean(userData.profile_complete !== false)
     };
     
     setUser(sanitizedUser);
@@ -315,34 +355,49 @@ export const AuthProvider = ({ children }) => {
     setIsAuthModalOpen(false);
   };
 
-  // Register a new user
-  const register = (username, password, role) => {
+  // Register a new user (API POST /users)
+  const register = async (registerData) => {
     setError('');
-    
-    // Check if username already exists
-    if (users.some(u => u.username.toLowerCase() === username.toLowerCase())) {
-      setError('Benutzername bereits vergeben');
+    try {
+      const body = {
+        username: registerData.username,
+        email: registerData.email,
+        password: registerData.password,
+        role: registerData.role || 'customer',
+        first_name: registerData.first_name || null,
+        last_name: registerData.last_name || null,
+        address: registerData.address || null,
+        postal_code: registerData.postal_code || null,
+        city: registerData.city || null,
+        birthday: registerData.birthday || null,
+        phone: registerData.phone || null
+      };
+      const res = await fetch(`${API_URL}/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data?.detail || 'Registrierung fehlgeschlagen');
+        return false;
+      }
+      const backendUser = data;
+      completeLogin({
+        id: backendUser.id,
+        username: backendUser.username,
+        role: String(backendUser.role || '').toUpperCase(),
+        has2FA: Boolean(backendUser.has_2fa),
+        profileImage: backendUser.profile_picture_url,
+        is_active: true,
+        must_change_password: Boolean(backendUser.must_change_password),
+        profile_complete: Boolean(backendUser.profile_complete !== false)
+      });
+      return true;
+    } catch (err) {
+      setError('Registrierung fehlgeschlagen');
       return false;
     }
-    
-    // Create new user
-    const newUser = {
-      id: users.length + 1,
-      username,
-      password,
-      role,
-      has2FA: false,
-      twoFactorSecret: null,
-      backupCodes: [],
-      profileImage: null,
-      is_active: true
-    };
-    
-    setUsers([...users, newUser]);
-    
-    // Auto-login after registration
-    completeLogin(newUser);
-    return true;
   };
 
   // Logout function
@@ -366,6 +421,25 @@ export const AuthProvider = ({ children }) => {
 
   const updateUser2FAState = (enabled) => {
     setUser((prev) => (prev ? { ...prev, has2FA: Boolean(enabled) } : prev));
+  };
+
+  const refreshUser = async () => {
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_URL}/users/me`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return;
+      const current = await res.json();
+      setUser({
+        id: current.id,
+        username: current.username,
+        role: String(current.role || '').toUpperCase(),
+        has2FA: current.has_2fa,
+        profileImage: current.profile_picture_url,
+        is_active: current.is_active !== false,
+        must_change_password: Boolean(current.must_change_password),
+        profile_complete: Boolean(current.profile_complete !== false)
+      });
+    } catch (_) {}
   };
 
   // Check if user is authenticated
@@ -457,7 +531,8 @@ export const AuthProvider = ({ children }) => {
     authLoading,
     maintenanceBypassKey,
     setMaintenanceBypassKey,
-    withAuthHeaders
+    withAuthHeaders,
+    refreshUser
   };
 
   return (

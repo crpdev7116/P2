@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Float, DateTime, Text, Enum, Table, JSON
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Float, DateTime, Text, Enum, Table, JSON, Date
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime
 import enum
@@ -66,6 +66,19 @@ class User(Base):
     role = Column(Enum(UserRole, native_enum=False), default=UserRole.CUSTOMER)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Extended profile (Support/Inkasso)
+    first_name = Column(String(100), nullable=True)
+    last_name = Column(String(100), nullable=True)
+    address = Column(String(255), nullable=True)
+    postal_code = Column(String(20), nullable=True)
+    city = Column(String(100), nullable=True)
+    birthday = Column(Date, nullable=True)
+    phone = Column(String(50), nullable=True)
+
+    # Admin / first-login flags
+    must_change_password = Column(Boolean, default=False)
+    profile_complete = Column(Boolean, default=False)
     
     # New fields for 2FA and profile
     profile_picture_url = Column(String(255), nullable=True)
@@ -109,6 +122,12 @@ class Merchant(Base):
     phone = Column(String(100), nullable=True)
     opening_hours = Column(String(255), nullable=True)
     support_email = Column(String(100), nullable=True)
+    description = Column(Text, nullable=True)
+    imprint = Column(Text, nullable=True)
+    instagram_url = Column(String(255), nullable=True)
+    tiktok_url = Column(String(255), nullable=True)
+    website_url = Column(String(255), nullable=True)
+    shop_image_url = Column(String(255), nullable=True)
     
     # Relationships
     user = relationship("User", back_populates="merchant")
@@ -142,6 +161,7 @@ class Category(Base):
     seller_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # NULL = global category
     age_restriction = Column(Integer, default=0)  # 0, 16, 18
     parent_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
+    display_order = Column(Integer, default=0)
     
     # Backward compatibility with old logic
     is_18_plus = Column(Boolean, default=False)
@@ -151,6 +171,13 @@ class Category(Base):
     items = relationship("Item", secondary=item_category_association, back_populates="categories")
     subcategories = relationship("Category", backref="parent", remote_side=[id])
 
+class PreorderLeadTimeUnit(enum.Enum):
+    MINUTES = "minutes"
+    HOURS = "hours"
+    DAYS = "days"
+    WEEKS = "weeks"
+
+
 class Item(Base):
     __tablename__ = "items"
 
@@ -158,6 +185,7 @@ class Item(Base):
     name = Column(String(100), nullable=False)
     description = Column(Text)
     merchant_id = Column(Integer, ForeignKey("merchants.id"))
+    display_order = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -174,6 +202,18 @@ class Item(Base):
     sku = Column(String(50), unique=True)
     discount_percentage = Column(Float, default=0.0)
     fixed_discount_price = Column(Float, nullable=True)
+    
+    # Vorbestellung (Preorder)
+    preorder_lead_time_value = Column(Integer, nullable=True)
+    preorder_lead_time_unit = Column(String(20), nullable=True)  # minutes, hours, days, weeks
+    
+    # Nur für Seller/Admin sichtbar – Lieferzeit vom Großhändler
+    supplier_delivery_time = Column(String(100), nullable=True)
+    
+    # Abo (Subscription)
+    is_subscription_eligible = Column(Boolean, default=False)
+    allowed_delivery_methods = Column(JSON, default=lambda: ["pickup", "shipping"])  # z.B. ["pickup", "shipping"]
+    subscription_shipping_cost = Column(Float, nullable=True)
     
     # Relationships
     merchant = relationship("Merchant", back_populates="items")
@@ -197,9 +237,11 @@ class Customer(Base):
     is_verified_adult = Column(Boolean, default=False)
     adult_verification_count = Column(Integer, default=0)
     
-    # Credit Limit (Pillar 7)
+    # Credit Limit (Pillar 7) / Rechnungslimit
     credit_limit_euro = Column(Float, default=0.0)
     current_credit_used = Column(Float, default=0.0)
+    # Pro Händler einstellbare Zahlungsmethoden für diesen Kunden
+    allowed_payment_methods = Column(JSON, default=lambda: ["CASH", "PAYPAL", "INVOICE"])
     
     # Anti-Fake Cash Payment (Pillar 8)
     is_trusted = Column(Boolean, default=False)

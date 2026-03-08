@@ -1,242 +1,260 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 
 const API_URL = 'http://127.0.0.1:8000';
 
+const PREORDER_UNITS = [
+  { value: 'minutes', label: 'Minuten' },
+  { value: 'hours', label: 'Stunden' },
+  { value: 'days', label: 'Tage' },
+  { value: 'weeks', label: 'Wochen' },
+];
+
+const DELIVERY_METHODS = [
+  { value: 'pickup', label: 'Abholung' },
+  { value: 'shipping', label: 'Versand' },
+];
+
+const emptyForm = () => ({
+  name: '',
+  description: '',
+  price_standard: '',
+  price_preorder: '',
+  price_subscription: '',
+  age_restriction: 0,
+  stock_quantity: 0,
+  sku: '',
+  category_ids: [],
+  preorder_lead_time_value: '',
+  preorder_lead_time_unit: 'days',
+  supplier_delivery_time: '',
+  is_subscription_eligible: false,
+  allowed_delivery_methods: ['pickup', 'shipping'],
+  subscription_shipping_cost: '',
+});
+
 const ManageProducts = () => {
-  const { withAuthHeaders, user } = useAuth();
+  const { withAuthHeaders } = useAuth();
   const [categories, setCategories] = useState([]);
-  const [selectedCategoryId, setSelectedCategoryId] = useState('');
-  const [loadingCategories, setLoadingCategories] = useState(true);
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [creatingItem, setCreatingItem] = useState(false);
   const [hasMerchantProfile, setHasMerchantProfile] = useState(true);
   const [merchantId, setMerchantId] = useState(null);
-  const [itemSuccess, setItemSuccess] = useState('');
 
-  const [newCategory, setNewCategory] = useState({
-    name: '',
-    description: '',
-    age_restriction: 0
-  });
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(emptyForm);
+  const [saving, setSaving] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
 
-  const [newItem, setNewItem] = useState({
-    name: '',
-    description: '',
-    price_standard: '',
-    price_preorder: '',
-    price_subscription: '',
-    age_restriction: 0,
-    stock_quantity: 0,
-    sku: '',
-    image_url: '',
-    category_id: ''
-  });
+  const [showInlineCategory, setShowInlineCategory] = useState(false);
+  const [inlineCategoryName, setInlineCategoryName] = useState('');
+  const [creatingCategory, setCreatingCategory] = useState(false);
 
-  const loadCategories = async () => {
-    setLoadingCategories(true);
+  const loadProfileAndData = async () => {
+    setLoading(true);
     setError('');
-    if (!hasMerchantProfile) {
-      setError('Bitte erstelle zuerst deinen Shop');
-      return;
-    }
     try {
-      const profileRes = await fetch(`${API_URL}/merchant/profile`, {
-        headers: withAuthHeaders()
-      });
+      const profileRes = await fetch(`${API_URL}/merchant/profile`, { headers: withAuthHeaders() });
       if (!profileRes.ok) {
         setHasMerchantProfile(false);
         setMerchantId(null);
         setCategories([]);
-        setSelectedCategoryId('');
+        setItems([]);
+        setLoading(false);
         return;
       }
       const profileData = await profileRes.json().catch(() => ({}));
       setHasMerchantProfile(true);
       setMerchantId(Number(profileData?.id) || null);
 
-      const res = await fetch(`${API_URL}/categories`, {
-        headers: withAuthHeaders()
-      });
-      const data = await res.json().catch(() => []);
-      if (!res.ok) {
-        throw new Error(data?.detail || 'Kategorien konnten nicht geladen werden');
-      }
+      const [catRes, itemsRes] = await Promise.all([
+        fetch(`${API_URL}/categories`, { headers: withAuthHeaders() }),
+        fetch(`${API_URL}/seller/items`, { headers: withAuthHeaders() }),
+      ]);
 
-      const normalized = Array.isArray(data)
-        ? data
+      const catData = await catRes.json().catch(() => []);
+      if (!catRes.ok) throw new Error(catData?.detail || 'Kategorien konnten nicht geladen werden');
+      const normalized = Array.isArray(catData)
+        ? catData
             .map((c) => ({
               id: Number(c?.id),
               name: String(c?.name || '').trim(),
               description: String(c?.description || ''),
               seller_id: c?.seller_id ?? null,
-              age_restriction: Number(c?.age_restriction ?? 0)
+              age_restriction: Number(c?.age_restriction ?? 0),
+              display_order: Number(c?.display_order ?? 0),
             }))
             .filter((c) => Number.isFinite(c.id) && c.name.length > 0)
+            .sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
         : [];
-
       setCategories(normalized);
-      if (normalized.length > 0 && !selectedCategoryId) {
-        setSelectedCategoryId(String(normalized[0].id));
-      }
-      if (normalized.length > 0 && !newItem.category_id) {
-        setNewItem((prev) => ({ ...prev, category_id: String(normalized[0].id) }));
-      }
+
+      const itemsData = await itemsRes.json().catch(() => []);
+      if (!itemsRes.ok) throw new Error(itemsData?.detail || 'Artikel konnten nicht geladen werden');
+      setItems(Array.isArray(itemsData) ? itemsData : []);
     } catch (e) {
-      setError(e.message || 'Fehler beim Laden der Kategorien');
+      setError(e.message || 'Fehler beim Laden');
+      setItems([]);
       setCategories([]);
-      setSelectedCategoryId('');
     } finally {
-      setLoadingCategories(false);
+      setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadCategories();
+    loadProfileAndData();
   }, []);
 
-  const selectedCategory = useMemo(() => {
-    return categories.find((c) => String(c.id) === String(selectedCategoryId)) || null;
-  }, [categories, selectedCategoryId]);
+  const openCreateModal = () => {
+    setEditingId(null);
+    setForm({
+      ...emptyForm(),
+      category_ids: categories.length ? [categories[0].id] : [],
+    });
+    setModalOpen(true);
+    setSuccessMessage('');
+  };
 
-  const createCategory = async (e) => {
-    e.preventDefault();
-    if (!hasMerchantProfile) {
-      setError('Bitte erstelle zuerst deinen Shop');
-      return;
-    }
+  const openEditModal = (item) => {
+    setEditingId(item.id);
+    const catIds = Array.isArray(item.category_ids) ? item.category_ids : (item.categories || []).map((c) => (typeof c === 'object' ? c.id : c)).filter(Boolean);
+    setForm({
+      name: item.name ?? '',
+      description: item.description ?? '',
+      price_standard: item.price_standard ?? '',
+      price_preorder: item.price_preorder ?? '',
+      price_subscription: item.price_subscription ?? '',
+      age_restriction: item.age_restriction ?? 0,
+      stock_quantity: item.stock_quantity ?? 0,
+      sku: item.sku ?? '',
+      category_ids: catIds.length ? catIds : (categories.length ? [categories[0].id] : []),
+      preorder_lead_time_value: item.preorder_lead_time_value ?? '',
+      preorder_lead_time_unit: item.preorder_lead_time_unit || 'days',
+      supplier_delivery_time: item.supplier_delivery_time ?? '',
+      is_subscription_eligible: Boolean(item.is_subscription_eligible),
+      allowed_delivery_methods: Array.isArray(item.allowed_delivery_methods)
+        ? item.allowed_delivery_methods
+        : ['pickup', 'shipping'],
+      subscription_shipping_cost: item.subscription_shipping_cost ?? '',
+    });
+    setModalOpen(true);
+    setSuccessMessage('');
+  };
 
-    if (!newCategory.name.trim()) {
-      setError('Name der Kategorie ist erforderlich');
-      return;
-    }
-
-    setCreating(true);
+  const createCategoryInline = async (e) => {
+    e?.preventDefault();
+    if (!inlineCategoryName.trim()) return;
+    setCreatingCategory(true);
     setError('');
     try {
       const res = await fetch(`${API_URL}/categories`, {
         method: 'POST',
         headers: withAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
-          name: newCategory.name.trim(),
-          description: newCategory.description.trim() || null,
-          age_restriction: Number(newCategory.age_restriction)
-        })
+          name: inlineCategoryName.trim(),
+          description: '',
+          age_restriction: 0,
+        }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data?.detail || 'Kategorie konnte nicht erstellt werden');
+      if (!res.ok) throw new Error(data?.detail || 'Kategorie konnte nicht erstellt werden');
+      setInlineCategoryName('');
+      setShowInlineCategory(false);
+      await loadProfileAndData();
+      if (data.id != null) {
+        setForm((prev) => ({
+          ...prev,
+          category_ids: [Number(data.id)],
+        }));
       }
-
-      setNewCategory({ name: '', description: '', age_restriction: 0 });
-      await loadCategories();
-      setSelectedCategoryId(String(data.id));
-    } catch (e2) {
-      setError(e2.message || 'Fehler beim Erstellen der Kategorie');
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const deleteCategory = async (categoryId) => {
-    setError('');
-    try {
-      const res = await fetch(`${API_URL}/categories/${categoryId}`, {
-        method: 'DELETE',
-        headers: withAuthHeaders()
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data?.detail || 'Kategorie konnte nicht gelöscht werden');
-      }
-
-      if (String(selectedCategoryId) === String(categoryId)) {
-        setSelectedCategoryId('');
-      }
-      await loadCategories();
     } catch (e) {
-      setError(e.message || 'Fehler beim Löschen der Kategorie');
+      setError(e.message || 'Fehler');
+    } finally {
+      setCreatingCategory(false);
     }
   };
 
-  const createItem = async (e) => {
+  const toggleDeliveryMethod = (value) => {
+    setForm((prev) => {
+      const list = prev.allowed_delivery_methods || [];
+      const next = list.includes(value) ? list.filter((m) => m !== value) : [...list, value];
+      return { ...prev, allowed_delivery_methods: next.length ? next : ['pickup', 'shipping'] };
+    });
+  };
+
+  const submitForm = async (e) => {
     e.preventDefault();
     setError('');
-    setItemSuccess('');
-
+    setSuccessMessage('');
     if (!hasMerchantProfile || !merchantId) {
       setError('Bitte erstelle zuerst deinen Shop');
       return;
     }
-
-    if (!newItem.name.trim()) {
+    if (!form.name.trim()) {
       setError('Titel ist erforderlich');
       return;
     }
-
-    if (!newItem.category_id) {
-      setError('Kategorie ist erforderlich');
-      return;
-    }
-
-    const price = Number(newItem.price_standard);
+    const price = Number(form.price_standard);
     if (!Number.isFinite(price) || price < 0) {
       setError('Preis muss eine gültige Zahl sein');
       return;
     }
-
     const skuValue =
-      newItem.sku.trim() ||
-      `${newItem.name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '-').slice(0, 20)}-${Date.now().toString().slice(-6)}`;
+      form.sku.trim() ||
+      `${form.name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '-').slice(0, 20)}-${Date.now().toString().slice(-6)}`;
 
-    setCreatingItem(true);
+    setSaving(true);
     try {
       const payload = {
-        name: newItem.name.trim(),
-        description: newItem.description.trim() || null,
+        name: form.name.trim(),
+        description: form.description.trim() || null,
         price_standard: price,
-        price_preorder: newItem.price_preorder === '' ? null : Number(newItem.price_preorder),
-        price_subscription: newItem.price_subscription === '' ? null : Number(newItem.price_subscription),
-        age_restriction: Number(newItem.age_restriction || 0),
-        stock_quantity: Number(newItem.stock_quantity || 0),
+        price_preorder: form.price_preorder === '' ? null : Number(form.price_preorder),
+        price_subscription: form.price_subscription === '' ? null : Number(form.price_subscription),
+        age_restriction: Number(form.age_restriction || 0),
+        stock_quantity: Number(form.stock_quantity || 0),
         sku: skuValue,
-        category_ids: [Number(newItem.category_id)]
+        category_ids: (form.category_ids && form.category_ids.length) ? form.category_ids.map(Number) : (categories[0] ? [categories[0].id] : []),
+        preorder_lead_time_value: form.preorder_lead_time_value === '' ? null : Number(form.preorder_lead_time_value),
+        preorder_lead_time_unit: form.preorder_lead_time_unit || null,
+        supplier_delivery_time: form.supplier_delivery_time.trim() || null,
+        is_subscription_eligible: Boolean(form.is_subscription_eligible),
+        allowed_delivery_methods: form.allowed_delivery_methods?.length ? form.allowed_delivery_methods : ['pickup', 'shipping'],
+        subscription_shipping_cost: form.subscription_shipping_cost === '' ? null : Number(form.subscription_shipping_cost),
       };
 
-      const res = await fetch(`${API_URL}/items?merchant_id=${merchantId}`, {
-        method: 'POST',
-        headers: withAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify(payload)
-      });
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data?.detail || 'Artikel konnte nicht erstellt werden');
+      if (editingId) {
+        const res = await fetch(`${API_URL}/seller/items/${editingId}`, {
+          method: 'PATCH',
+          headers: withAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ ...payload, sku: form.sku.trim() || skuValue }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.detail || 'Artikel konnte nicht aktualisiert werden');
+        setSuccessMessage('Artikel gespeichert.');
+        await loadProfileAndData();
+      } else {
+        const res = await fetch(`${API_URL}/items?merchant_id=${merchantId}`, {
+          method: 'POST',
+          headers: withAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.detail || 'Artikel konnte nicht erstellt werden');
+        setSuccessMessage(`Artikel "${data?.name || form.name}" wurde erstellt.`);
+        setForm(emptyForm());
+        await loadProfileAndData();
+        setModalOpen(false);
       }
-
-      setItemSuccess(`Artikel "${data?.name || newItem.name}" wurde erstellt.`);
-      setNewItem({
-        name: '',
-        description: '',
-        price_standard: '',
-        price_preorder: '',
-        price_subscription: '',
-        age_restriction: 0,
-        stock_quantity: 0,
-        sku: '',
-        image_url: '',
-        category_id: newItem.category_id || (categories[0] ? String(categories[0].id) : '')
-      });
     } catch (e) {
-      setError(e.message || 'Fehler beim Erstellen des Artikels');
+      setError(e.message || 'Fehler');
     } finally {
-      setCreatingItem(false);
+      setSaving(false);
     }
   };
-
-  const isOwnCategory = (c) => Number(c.seller_id || 0) === Number(user?.id || -1);
 
   return (
     <div className="min-h-screen bg-black text-white">
@@ -252,199 +270,295 @@ const ManageProducts = () => {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="border border-zinc-800 bg-zinc-950 p-6 rounded-lg">
-            <h2 className="text-lg font-semibold mb-4">Kategorie auswählen</h2>
-            <select
-              value={selectedCategoryId}
-              onChange={(e) => setSelectedCategoryId(e.target.value)}
-              disabled={loadingCategories || categories.length === 0}
-              className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg"
-            >
-              {loadingCategories && <option value="">Lade Kategorien...</option>}
-              {!loadingCategories && categories.length === 0 && <option value="">Keine Kategorien gefunden</option>}
-              {!loadingCategories &&
-                categories.map((c) => (
-                  <option key={c.id} value={String(c.id)}>
-                    {c.name}
-                  </option>
+        <div className="mb-4 flex justify-end">
+          <button
+            type="button"
+            onClick={openCreateModal}
+            disabled={!hasMerchantProfile || loading}
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg font-medium disabled:opacity-50"
+          >
+            Neuen Artikel erstellen
+          </button>
+        </div>
+
+        <div className="border border-zinc-800 bg-zinc-950 rounded-lg overflow-hidden">
+          {loading ? (
+            <div className="p-8 text-center text-zinc-400">Lade Artikel …</div>
+          ) : items.length === 0 ? (
+            <div className="p-8 text-center text-zinc-400">Noch keine Artikel. Erstelle einen mit dem Button oben.</div>
+          ) : (
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-zinc-800 text-left text-zinc-400 text-sm">
+                  <th className="p-3">Name</th>
+                  <th className="p-3">SKU</th>
+                  <th className="p-3">Preis</th>
+                  <th className="p-3">Bestand</th>
+                  <th className="p-3 w-24">Aktion</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((it) => (
+                  <tr key={it.id} className="border-b border-zinc-800/50 hover:bg-zinc-900/50">
+                    <td className="p-3 font-medium">{it.name}</td>
+                    <td className="p-3 text-zinc-400">{it.sku || '–'}</td>
+                    <td className="p-3">{Number(it.price_standard)?.toFixed(2)} €</td>
+                    <td className="p-3">{it.stock_quantity ?? 0}</td>
+                    <td className="p-3">
+                      <button
+                        type="button"
+                        onClick={() => openEditModal(it)}
+                        className="text-sm text-emerald-400 hover:underline"
+                      >
+                        Bearbeiten
+                      </button>
+                    </td>
+                  </tr>
                 ))}
-            </select>
-
-            {selectedCategory && (
-              <div className="mt-4 text-sm text-zinc-400">
-                <div><span className="text-zinc-300">Beschreibung:</span> {selectedCategory.description || '-'}</div>
-                <div>
-                  <span className="text-zinc-300">Altersbeschränkung:</span>{' '}
-                  {selectedCategory.age_restriction === 18
-                    ? 'Ab 18'
-                    : selectedCategory.age_restriction === 16
-                    ? 'Ab 16'
-                    : 'Keine'}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="border border-zinc-800 bg-zinc-950 p-6 rounded-lg">
-            <h2 className="text-lg font-semibold mb-4">Neue Kategorie erstellen</h2>
-            <form onSubmit={createCategory} className="space-y-3">
-              <input
-                value={newCategory.name}
-                onChange={(e) => setNewCategory((p) => ({ ...p, name: e.target.value }))}
-                className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg"
-                placeholder="Name"
-              />
-              <input
-                value={newCategory.description}
-                onChange={(e) => setNewCategory((p) => ({ ...p, description: e.target.value }))}
-                className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg"
-                placeholder="Beschreibung"
-              />
-              <select
-                value={newCategory.age_restriction}
-                onChange={(e) => setNewCategory((p) => ({ ...p, age_restriction: Number(e.target.value) }))}
-                className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg"
-              >
-                <option value={0}>Keine Altersbeschränkung</option>
-                <option value={16}>Ab 16</option>
-                <option value={18}>Ab 18</option>
-              </select>
-              <button
-                type="submit"
-                disabled={creating}
-                className="px-4 py-2 border border-zinc-700 rounded-lg hover:bg-zinc-900"
-              >
-                {creating ? 'Erstelle...' : 'Kategorie erstellen'}
-              </button>
-            </form>
-          </div>
+              </tbody>
+            </table>
+          )}
         </div>
 
-        <div className="border border-zinc-800 bg-zinc-950 p-6 rounded-lg mt-6">
-          <h2 className="text-lg font-semibold mb-4">Neuen Artikel erstellen</h2>
-          <form onSubmit={createItem} className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <input
-              value={newItem.name}
-              onChange={(e) => setNewItem((p) => ({ ...p, name: e.target.value }))}
-              className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg"
-              placeholder="Titel *"
-            />
-            <input
-              value={newItem.sku}
-              onChange={(e) => setNewItem((p) => ({ ...p, sku: e.target.value }))}
-              className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg"
-              placeholder="SKU (optional, auto falls leer)"
-            />
-            <input
-              value={newItem.price_standard}
-              onChange={(e) => setNewItem((p) => ({ ...p, price_standard: e.target.value }))}
-              className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg"
-              placeholder="Standardpreis *"
-              type="number"
-              min="0"
-              step="0.01"
-            />
-            <input
-              value={newItem.stock_quantity}
-              onChange={(e) => setNewItem((p) => ({ ...p, stock_quantity: e.target.value }))}
-              className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg"
-              placeholder="Lagerbestand"
-              type="number"
-              min="0"
-              step="1"
-            />
-            <input
-              value={newItem.price_preorder}
-              onChange={(e) => setNewItem((p) => ({ ...p, price_preorder: e.target.value }))}
-              className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg"
-              placeholder="Preorder Preis (optional)"
-              type="number"
-              min="0"
-              step="0.01"
-            />
-            <input
-              value={newItem.price_subscription}
-              onChange={(e) => setNewItem((p) => ({ ...p, price_subscription: e.target.value }))}
-              className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg"
-              placeholder="Abo Preis (optional)"
-              type="number"
-              min="0"
-              step="0.01"
-            />
-            <select
-              value={newItem.category_id}
-              onChange={(e) => setNewItem((p) => ({ ...p, category_id: e.target.value }))}
-              className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg"
-            >
-              <option value="">Kategorie wählen *</option>
-              {categories.map((c) => (
-                <option key={c.id} value={String(c.id)}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            <select
-              value={newItem.age_restriction}
-              onChange={(e) => setNewItem((p) => ({ ...p, age_restriction: Number(e.target.value) }))}
-              className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg"
-            >
-              <option value={0}>Keine Altersbeschränkung</option>
-              <option value={16}>Ab 16</option>
-              <option value={18}>Ab 18</option>
-            </select>
-            <input
-              value={newItem.image_url}
-              onChange={(e) => setNewItem((p) => ({ ...p, image_url: e.target.value }))}
-              className="w-full md:col-span-2 px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg"
-              placeholder="Bild-URL (optional)"
-            />
-            <textarea
-              value={newItem.description}
-              onChange={(e) => setNewItem((p) => ({ ...p, description: e.target.value }))}
-              className="w-full md:col-span-2 px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg"
-              placeholder="Beschreibung"
-              rows={3}
-            />
-            <div className="md:col-span-2">
-              <button
-                type="submit"
-                disabled={creatingItem}
-                className="px-4 py-2 border border-zinc-700 rounded-lg hover:bg-zinc-900"
-              >
-                {creatingItem ? 'Speichert...' : 'Artikel erstellen'}
-              </button>
-            </div>
-          </form>
-          {itemSuccess && <div className="text-sm text-green-400 mt-3">{itemSuccess}</div>}
-        </div>
+        {error && <div className="mt-4 text-sm text-red-400">{error}</div>}
 
-        <div className="border border-zinc-800 bg-zinc-950 p-6 rounded-lg mt-6">
-          <h2 className="text-lg font-semibold mb-4">Eigene Kategorien</h2>
-          <div className="space-y-2">
-            {categories.filter(isOwnCategory).length === 0 && (
-              <div className="text-zinc-500 text-sm">Keine eigenen Kategorien vorhanden.</div>
-            )}
-            {categories.filter(isOwnCategory).map((c) => (
-              <div key={c.id} className="flex items-center justify-between border border-zinc-800 p-3 rounded">
-                <div>
-                  <div className="font-medium">{c.name}</div>
-                  <div className="text-xs text-zinc-400">
-                    {c.age_restriction === 18 ? 'Ab 18' : c.age_restriction === 16 ? 'Ab 16' : 'Keine Beschränkung'}
+        {/* Modal */}
+        {modalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" onClick={() => setModalOpen(false)}>
+            <div
+              className="bg-zinc-900 border border-zinc-700 rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-6">
+                <h2 className="text-xl font-semibold mb-4">{editingId ? 'Artikel bearbeiten' : 'Neuen Artikel erstellen'}</h2>
+                <form onSubmit={submitForm} className="space-y-4">
+                  <div>
+                    <label className="block text-sm text-zinc-400 mb-1">Titel *</label>
+                    <input
+                      value={form.name}
+                      onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
+                      className="w-full px-3 py-2 bg-zinc-800 border border-zinc-600 rounded-lg"
+                      placeholder="Titel *"
+                    />
                   </div>
-                </div>
-                <button
-                  onClick={() => deleteCategory(c.id)}
-                  className="px-3 py-1 border border-red-700 text-red-400 rounded hover:bg-red-950"
-                >
-                  Löschen
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
+                  <div>
+                    <label className="block text-sm text-zinc-400 mb-1">Kategorie *</label>
+                    <div className="flex gap-2 flex-wrap items-center">
+                      <select
+                        value={form.category_ids?.[0] ?? ''}
+                        onChange={(e) => setForm((p) => ({ ...p, category_ids: e.target.value ? [Number(e.target.value)] : [] }))}
+                        className="flex-1 min-w-[200px] px-3 py-2 bg-zinc-800 border border-zinc-600 rounded-lg"
+                      >
+                        <option value="">Kategorie wählen</option>
+                        {categories.map((c) => (
+                          <option key={c.id} value={String(c.id)}>{c.name}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => setShowInlineCategory(true)}
+                        className="p-2 border border-zinc-600 rounded-lg hover:bg-zinc-800"
+                        title="Neue Kategorie anlegen"
+                      >
+                        +
+                      </button>
+                      {showInlineCategory && (
+                        <span className="flex items-center gap-2 flex-wrap">
+                          <input
+                            value={inlineCategoryName}
+                            onChange={(e) => setInlineCategoryName(e.target.value)}
+                            className="px-2 py-1 bg-zinc-800 border border-zinc-600 rounded text-sm w-40"
+                            placeholder="Neue Kategorie"
+                            autoFocus
+                          />
+                          <button type="button" onClick={createCategoryInline} disabled={creatingCategory} className="text-sm text-emerald-400 hover:underline">
+                            {creatingCategory ? '…' : 'Anlegen'}
+                          </button>
+                          <button type="button" onClick={() => { setShowInlineCategory(false); setInlineCategoryName(''); }} className="text-zinc-400 text-sm">
+                            Abbrechen
+                          </button>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm text-zinc-400 mb-1">Standardpreis *</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={form.price_standard}
+                        onChange={(e) => setForm((p) => ({ ...p, price_standard: e.target.value }))}
+                        className="w-full px-3 py-2 bg-zinc-800 border border-zinc-600 rounded-lg"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-zinc-400 mb-1">SKU (optional)</label>
+                      <input
+                        value={form.sku}
+                        onChange={(e) => setForm((p) => ({ ...p, sku: e.target.value }))}
+                        className="w-full px-3 py-2 bg-zinc-800 border border-zinc-600 rounded-lg"
+                        placeholder="Auto wenn leer"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm text-zinc-400 mb-1">Preorder-Preis (optional)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={form.price_preorder}
+                        onChange={(e) => setForm((p) => ({ ...p, price_preorder: e.target.value }))}
+                        className="w-full px-3 py-2 bg-zinc-800 border border-zinc-600 rounded-lg"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-zinc-400 mb-1">Lagerbestand</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={form.stock_quantity}
+                        onChange={(e) => setForm((p) => ({ ...p, stock_quantity: e.target.value }))}
+                        className="w-full px-3 py-2 bg-zinc-800 border border-zinc-600 rounded-lg"
+                      />
+                    </div>
+                  </div>
 
-        {error && <div className="text-sm text-red-400 mt-4">{error}</div>}
+                  <div className="border-t border-zinc-700 pt-4">
+                    <h3 className="text-sm font-medium text-zinc-300 mb-2">Vorbestellzeit</h3>
+                    <div className="flex gap-3 flex-wrap">
+                      <input
+                        type="number"
+                        min="0"
+                        value={form.preorder_lead_time_value}
+                        onChange={(e) => setForm((p) => ({ ...p, preorder_lead_time_value: e.target.value }))}
+                        className="w-24 px-3 py-2 bg-zinc-800 border border-zinc-600 rounded-lg"
+                        placeholder="Wert"
+                      />
+                      <select
+                        value={form.preorder_lead_time_unit}
+                        onChange={(e) => setForm((p) => ({ ...p, preorder_lead_time_unit: e.target.value }))}
+                        className="px-3 py-2 bg-zinc-800 border border-zinc-600 rounded-lg"
+                      >
+                        {PREORDER_UNITS.map((u) => (
+                          <option key={u.value} value={u.value}>{u.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-zinc-400 mb-1">Lieferzeit Großhändler (nur für dich sichtbar)</label>
+                    <input
+                      value={form.supplier_delivery_time}
+                      onChange={(e) => setForm((p) => ({ ...p, supplier_delivery_time: e.target.value }))}
+                      className="w-full px-3 py-2 bg-zinc-800 border border-zinc-600 rounded-lg"
+                      placeholder="z. B. 3–5 Werktage"
+                    />
+                    <p className="text-xs text-zinc-500 mt-1">Nur für dich sichtbar – Erinnerung für Großhändler-Bestellung.</p>
+                  </div>
+
+                  <div className="border-t border-zinc-700 pt-4">
+                    <h3 className="text-sm font-medium text-zinc-300 mb-2">Abo-Bestellungen (Subscriptions)</h3>
+                    <label className="flex items-center gap-2 mb-3">
+                      <input
+                        type="checkbox"
+                        checked={form.is_subscription_eligible}
+                        onChange={(e) => setForm((p) => ({ ...p, is_subscription_eligible: e.target.checked }))}
+                        className="rounded"
+                      />
+                      <span>Als Abo bestellbar</span>
+                    </label>
+                    {form.is_subscription_eligible && (
+                      <>
+                        <div className="mb-2 text-sm text-zinc-400">Erlaubte Übergabearten für Abos</div>
+                        <div className="flex gap-4 flex-wrap">
+                          {DELIVERY_METHODS.map((d) => (
+                            <label key={d.value} className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={(form.allowed_delivery_methods || []).includes(d.value)}
+                                onChange={() => toggleDeliveryMethod(d.value)}
+                                className="rounded"
+                              />
+                              {d.label}
+                            </label>
+                          ))}
+                        </div>
+                        <div className="mt-2">
+                          <label className="block text-sm text-zinc-400 mb-1">Abo-Versandkosten (€)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={form.subscription_shipping_cost}
+                            onChange={(e) => setForm((p) => ({ ...p, subscription_shipping_cost: e.target.value }))}
+                            className="w-32 px-3 py-2 bg-zinc-800 border border-zinc-600 rounded-lg"
+                          />
+                        </div>
+                        <div className="mt-2">
+                          <label className="block text-sm text-zinc-400 mb-1">Abo-Preis (optional)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={form.price_subscription}
+                            onChange={(e) => setForm((p) => ({ ...p, price_subscription: e.target.value }))}
+                            className="w-32 px-3 py-2 bg-zinc-800 border border-zinc-600 rounded-lg"
+                          />
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-zinc-400 mb-1">Altersbeschränkung</label>
+                    <select
+                      value={form.age_restriction}
+                      onChange={(e) => setForm((p) => ({ ...p, age_restriction: Number(e.target.value) }))}
+                      className="w-full px-3 py-2 bg-zinc-800 border border-zinc-600 rounded-lg"
+                    >
+                      <option value={0}>Keine</option>
+                      <option value={16}>Ab 16</option>
+                      <option value={18}>Ab 18</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-zinc-400 mb-1">Beschreibung</label>
+                    <textarea
+                      value={form.description}
+                      onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
+                      className="w-full px-3 py-2 bg-zinc-800 border border-zinc-600 rounded-lg"
+                      rows={3}
+                    />
+                  </div>
+
+                  <div className="flex gap-3 pt-4">
+                    <button
+                      type="submit"
+                      disabled={saving}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg disabled:opacity-50"
+                    >
+                      {saving ? 'Speichert…' : editingId ? 'Speichern' : 'Artikel erstellen'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setModalOpen(false)}
+                      className="px-4 py-2 border border-zinc-600 rounded-lg hover:bg-zinc-800"
+                    >
+                      Schließen
+                    </button>
+                  </div>
+                  {successMessage && <p className="text-sm text-green-400">{successMessage}</p>}
+                  {error && <p className="text-sm text-red-400">{error}</p>}
+                </form>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

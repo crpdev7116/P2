@@ -16,6 +16,7 @@ import Sales from './pages/seller/Sales';
 import Analytics from './pages/seller/Analytics';
 import ManageCustomers from './pages/seller/ManageCustomers';
 import ShopProfile from './pages/seller/ShopProfile';
+import CompleteProfile from './pages/CompleteProfile';
 import Cart from './components/CartOptimized';
 import Auth from './components/Auth';
 import Navbar from './components/Navbar';
@@ -66,20 +67,54 @@ function RestrictedStateGuard() {
   return <Navigate to="/tickets" replace />;
 }
 
+function CompleteProfileGuard({ children }) {
+  const { user, token, isAuthenticated, authLoading } = useAuth();
+  const location = useLocation();
+
+  if (authLoading || !token || !user) return children;
+  if (!isAuthenticated()) return children;
+
+  const mustComplete = user.must_change_password === true || user.profile_complete === false;
+  const onCompletePage = location.pathname === '/complete-profile';
+
+  if (mustComplete && !onCompletePage) {
+    return <Navigate to="/complete-profile" replace />;
+  }
+  return children;
+}
+
+function BannedGuard({ children }) {
+  const { user, token, isAuthenticated, authLoading } = useAuth();
+  const location = useLocation();
+
+  if (authLoading || !token || !user) return children;
+  if (!isAuthenticated()) return children;
+  if (!user.is_banned) return children;
+
+  const ticketPaths = ['/tickets', '/tickets/new'];
+  const onTicketPath = location.pathname === '/tickets' || location.pathname === '/tickets/new' || /^\/tickets\/\d+$/.test(location.pathname);
+  if (onTicketPath) return children;
+
+  return <Navigate to="/tickets" replace />;
+}
+
 function AppRoutes() {
   const { user } = useAuth();
+  const location = useLocation();
   const isRestricted = !!user && user.is_active === false;
+  const showNavbar = location.pathname !== '/complete-profile';
 
   return (
     <>
       {isRestricted && (
         <div className="bg-red-600 text-white text-center p-3 font-bold z-50">⚠️ Dein Account ist aktuell eingeschränkt. Du kannst keine Käufe oder Verkäufe tätigen. Bitte eröffne ein Support-Ticket zur Klärung.</div>
       )}
-      <Navbar />
+      {showNavbar && <Navbar />}
       <Cart />
       <Auth />
       <RestrictedStateGuard />
-
+      <BannedGuard>
+      <CompleteProfileGuard>
       <Routes>
         <Route path="/" element={<MarketplaceHome />} />
         <Route path="/dashboard" element={<MarketplaceHome />} />
@@ -148,8 +183,11 @@ function AppRoutes() {
           }
         />
 
+        <Route path="/complete-profile" element={<CompleteProfile />} />
         <Route path="/:shopId" element={<ShopView />} />
       </Routes>
+      </CompleteProfileGuard>
+      </BannedGuard>
     </>
   );
 }
